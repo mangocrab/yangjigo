@@ -1,6 +1,7 @@
 import { test, expect, type Page, type BrowserContext } from '@playwright/test';
 import { pathStep, distance } from '../../src/server/simulation';
 import { stageFor, objectiveFor, tileOpen } from '../../src/shared/content';
+import { STORY } from '../../src/shared/story';
 import type { GameState } from '../../src/shared/protocol';
 async function observe(c: BrowserContext) {
   await c.addInitScript(() => {
@@ -83,6 +84,12 @@ async function drive(pages: Page[], timeout = 130000) {
     seen.add(s.stageIndex);
     if (s.phase === 'clear') return seen;
     expect(s.phase).not.toBe('over');
+    if (s.cutscene) {
+      for (const p of pages)
+        await send(p, { v: 1, type: 'scene-done', sceneId: s.cutscene.id });
+      await pages[0].waitForTimeout(70);
+      continue;
+    }
     const stage = stageFor(s),
       o = objectiveFor(s),
       target = stage.objects.find((p) => p.id === o.target)!;
@@ -108,11 +115,16 @@ async function drive(pages: Page[], timeout = 130000) {
       await send(pages[i], { v: 1, type: 'input', direction, attack: true });
       if (p.hp) {
         if (
+          p.weaponAcquired &&
           s.now >= p.skillAt[0] &&
           (enemy || s.players.some((q) => q.hp < 100))
         )
           await send(pages[i], { v: 1, type: 'skill', slot: 1 });
-        if (s.now >= p.skillAt[1] && (p.job === 'vanguard' ? !!enemy : !!down))
+        if (
+          p.weaponAcquired &&
+          s.now >= p.skillAt[1] &&
+          (p.job === 'vanguard' ? !!enemy : !!down)
+        )
           await send(pages[i], { v: 1, type: 'skill', slot: 2 });
         if (!enemy && distance(p, target) <= 1 && o.kind !== 'survive')
           await send(
@@ -372,6 +384,14 @@ test('로그인 보안·실제 모바일 멀티터치·세로 차단·공유 임
     await a.getByRole('button', { name: '작전 시작' }).click();
     await expect(a.locator('#game-canvas canvas')).toBeVisible();
     await expect(b.locator('#game-canvas canvas')).toBeVisible();
+    await b.screenshot({ path: 'test-results/mobile-cutscene.png' });
+    const button = (await b.locator('#scene-next').boundingBox())!;
+    expect(button.y + button.height).toBeLessThanOrEqual(440);
+    await finishSceneUI(a);
+    await expect(a.locator('#scene-next')).toBeDisabled();
+    expect((await snap(a)).cutscene).not.toBeNull();
+    await finishSceneUI(b);
+    await expect.poll(async () => (await snap(a)).cutscene).toBeNull();
     const ax = (await snap(a)).players[0].x;
     await a.keyboard.down('d');
     await a.waitForTimeout(180);
@@ -450,6 +470,12 @@ test('로그인 보안·실제 모바일 멀티터치·세로 차단·공유 임
   }
 });
 
+async function finishSceneUI(p: Page) {
+  const scene = (await snap(p)).cutscene;
+  if (!scene) return;
+  for (let i = 0; i < STORY[scene.key].lines.length; i++)
+    await p.locator('#scene-next').click();
+}
 async function walk(p: Page, target: { x: number; y: number }, range = 1) {
   const end = Date.now() + 25000;
   while (Date.now() < end) {
@@ -464,37 +490,95 @@ async function walk(p: Page, target: { x: number; y: number }, range = 1) {
     const key =
       next.x > me.x ? 'd' : next.x < me.x ? 'a' : next.y > me.y ? 's' : 'w';
     await p.keyboard.down('j');
-    await p.keyboard.press('k');
+    if (s.players[0].weaponAcquired) await p.keyboard.press('k');
     await p.keyboard.down(key);
     await p.waitForTimeout(155);
     await p.keyboard.up(key);
   }
   throw new Error('목표 도달 시간 초과');
 }
-test('실제 퍼즐 UI·잠긴 문·작업대·게임오버 메뉴 교체·체크포인트 복원', async ({
+test('도트 주연 선택·돌 던지기·무기 획득·구간 컷신·퍼즐·체크포인트', async ({
   browser,
 }) => {
   const c = await browser.newContext();
   await observe(c);
   const p = await c.newPage();
   try {
-    await register(p, '퍼즐 대원');
-    await create(p, '교실 탈출 확인');
+    await register(p, '첫날의 생존자');
+    await create(p, '에피소드 0 기원');
     await p.locator('#difficulty').selectOption('easy');
-    await p.locator('#job').selectOption('medic');
+    await p.locator('[data-job-choice="medic"]').click();
+    await expect(p.locator('[data-job-choice="medic"]')).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    await expect(p.locator('.party-slot canvas')).toHaveAttribute(
+      'data-job',
+      'medic',
+    );
+    await p.screenshot({
+      path: 'test-results/character-selection.png',
+      fullPage: true,
+    });
     await p.getByRole('button', { name: '준비 완료', exact: true }).click();
     await p.getByRole('button', { name: '작전 시작' }).click();
-    await expect(p.locator('#game-canvas canvas')).toBeVisible();
+    await expect(p.locator('[data-scene="outbreak"]')).toBeVisible();
+    const frozen = (await snap(p)).players[0].x;
+    await p.keyboard.press('d');
+    await p.keyboard.press('Escape');
+    expect((await snap(p)).players[0].x).toBe(frozen);
+    await expect(p.locator('[data-scene="outbreak"]')).toBeVisible();
+    await p.screenshot({ path: 'test-results/outbreak-cutscene.png' });
+    await finishSceneUI(p);
+    await expect.poll(async () => (await snap(p)).cutscene).toBeNull();
+    expect((await snap(p)).players[0].weaponAcquired).toBe(false);
+    await expect(p.locator('#skill1')).toBeDisabled();
+    await expect(p.locator('#attack')).toContainText('돌 던지기');
     await walk(p, { x: 3, y: 3 });
     await p.keyboard.press('e');
     await p.getByRole('button', { name: '알겠습니다' }).click();
-    await walk(p, { x: 5, y: 5 });
-    await p.keyboard.press('u');
-    await p.getByRole('button', { name: '공격력 강화', exact: true }).click();
-    await expect.poll(async () => (await snap(p)).players[0].upgrade).toBe(1);
+    // 실제 키보드 돌 공격을 적에게 맞혀 훈련 완료.
+    const end = Date.now() + 25000;
+    while ((await snap(p)).mission === 1 && Date.now() < end) {
+      const s = await snap(p),
+        me = s.players[0],
+        z = s.zombies.find((z) => z.hp > 0)!;
+      await walk(p, z);
+      const dx = z.x - me.x,
+        dy = z.y - me.y,
+        key =
+          Math.abs(dx) >= Math.abs(dy)
+            ? dx >= 0
+              ? 'd'
+              : 'a'
+            : dy >= 0
+              ? 's'
+              : 'w';
+      await p.keyboard.press(key);
+      await p.keyboard.down('j');
+      await p.waitForTimeout(600);
+      await p.keyboard.up('j');
+    }
+    await expect.poll(async () => (await snap(p)).mission).toBe(2);
+    expect((await snap(p)).players[0].rockHits).toBeGreaterThanOrEqual(3);
     await walk(p, { x: 9, y: 3 });
     await p.keyboard.press('e');
-    await expect.poll(async () => (await snap(p)).mission).toBe(2);
+    await expect.poll(async () => (await snap(p)).mission).toBe(3);
+    await walk(p, { x: 10, y: 6 });
+    await p.keyboard.press('e');
+    await expect(p.locator('[data-scene="weapons"]')).toBeVisible();
+    expect((await snap(p)).players[0].weaponAcquired).toBe(true);
+    await p.screenshot({ path: 'test-results/weapon-cutscene.png' });
+    await finishSceneUI(p);
+    await expect.poll(async () => (await snap(p)).cutscene).toBeNull();
+    await expect(p.locator('#skill1')).toBeEnabled();
+    await expect(p.locator('#self-hud')).toContainText('구조용 신호총');
+    expect((await snap(p)).players[0].job).toBe('medic');
+    await p.keyboard.press('u');
+    await expect(p.locator('#toast')).toContainText('작업대가 없습니다');
+    await expect(
+      p.getByRole('heading', { name: '현장 장비 강화' }),
+    ).toHaveCount(0);
     await walk(p, { x: 5, y: 2 });
     await p.keyboard.press('e');
     await expect(p.getByRole('dialog')).toContainText('3 · 1 · 4');
@@ -508,14 +592,16 @@ test('실제 퍼즐 UI·잠긴 문·작업대·게임오버 메뉴 교체·체�
     await p.getByLabel('잠금장치 번호').fill('000');
     await p.getByRole('button', { name: '잠금 해제' }).click();
     await expect(p.locator('#toast')).toContainText('번호');
-    expect((await snap(p)).mission).toBe(2);
+    expect((await snap(p)).mission).toBe(4);
     await p.getByLabel('잠금장치 번호').fill('314');
     await p.getByRole('button', { name: '잠금 해제' }).click();
     await expect(p.locator('#puzzle-form')).toHaveCount(0);
-    await p.screenshot({ path: 'test-results/classroom.png' });
+    await p.screenshot({ path: 'test-results/pixel-classroom.png' });
     await walk(p, { x: 16, y: 8 });
     await p.keyboard.press('e');
-    await expect.poll(async () => (await snap(p)).stageIndex).toBe(1);
+    await expect(p.locator('[data-scene="hall"]')).toBeVisible();
+    await finishSceneUI(p);
+    await expect.poll(async () => (await snap(p)).cutscene).toBeNull();
     const checkpoint = (await snap(p)).checkpoint;
     const enemy = (await snap(p)).zombies[0];
     await walk(p, enemy);
@@ -527,23 +613,19 @@ test('실제 퍼즐 UI·잠긴 문·작업대·게임오버 메뉴 교체·체�
       p.getByRole('heading', { name: '아직 끝이 아닙니다.' }),
     ).toBeVisible({ timeout: 90000 });
     await p.getByRole('button', { name: '체크포인트 재도전' }).click();
-    await expect.poll(async () => (await snap(p)).phase).toBe('playing');
+    await expect(p.locator('[data-scene="hall"]')).toBeVisible();
     const restored = await snap(p);
     expect(restored.stageIndex).toBe(1);
     expect(restored.mission).toBe(0);
     expect(restored.players[0].hp).toBe(
       checkpoint.players[restored.players[0].id].hp,
     );
-    expect(restored.players[0].parts).toBe(
-      checkpoint.players[restored.players[0].id].parts,
-    );
-    expect(restored.players[0].upgrade).toBe(
-      checkpoint.players[restored.players[0].id].upgrade,
-    );
+    expect(restored.players[0].weaponAcquired).toBe(true);
     expect(restored.zombies).toHaveLength(6);
-    const a = (await api(p, 'account')).body;
-    expect(a.profile.xp).toBe(0);
-    expect(a.episodes[0].tickets).toBe(0);
+    expect(new Set(restored.zombies.map((z) => z.kind)).size).toBe(3);
+    const account = (await api(p, 'account')).body;
+    expect(account.profile.xp).toBe(0);
+    expect(account.episodes[0].tickets).toBe(0);
   } finally {
     await c.close();
   }

@@ -3,6 +3,10 @@ export const TILE = 32,
 export const JOBS = {
   vanguard: {
     name: '선봉대',
+    character: '한도윤',
+    identity: '야구부 주장',
+    weapon: '알루미늄 배트',
+    bio: '망설이던 야구부 주장. 친구들 앞에 서는 순간, 배트는 모두를 지키는 무기가 된다.',
     hp: 140,
     damage: 26,
     range: 1,
@@ -11,6 +15,10 @@ export const JOBS = {
   },
   medic: {
     name: '의무대',
+    character: '백해인',
+    identity: '보건 동아리',
+    weapon: '구조용 신호총',
+    bio: '보건 동아리의 침착한 학생. 구조 장비와 응급 가방을 찾아 동료의 귀환을 책임진다.',
     hp: 100,
     damage: 18,
     range: 2,
@@ -25,16 +33,62 @@ export interface Pos {
 }
 export interface Prop extends Pos {
   id: string;
-  kind: 'npc' | 'bench' | 'item' | 'hint' | 'puzzle' | 'switch' | 'exit';
+  kind:
+    | 'npc'
+    | 'bench'
+    | 'gear'
+    | 'item'
+    | 'hint'
+    | 'puzzle'
+    | 'switch'
+    | 'exit';
   name: string;
   text?: string;
 }
 export interface Objective {
-  kind: 'talk' | 'collect' | 'puzzle' | 'activate' | 'survive' | 'rally';
+  kind:
+    | 'talk'
+    | 'practice'
+    | 'equip'
+    | 'collect'
+    | 'puzzle'
+    | 'activate'
+    | 'survive'
+    | 'rally';
   target: string;
   text: string;
   code?: string;
   durationMs?: number;
+}
+export const ZOMBIE_TYPES = {
+  student: {
+    name: '교복 감염자',
+    concept: '교실에서 변이한 학생. 가까운 생존자를 느리게 추격한다.',
+    hp: 1,
+    speed: 1,
+    damage: 1,
+    sight: 10,
+  },
+  runner: {
+    name: '체육복 감염자',
+    concept: '운동부 출신 감염자. 체력은 낮지만 먼 거리에서 빠르게 접근한다.',
+    hp: 0.75,
+    speed: 0.7,
+    damage: 0.8,
+    sight: 14,
+  },
+  caretaker: {
+    name: '시설관리 감염자',
+    concept: '안전모와 작업복을 입은 감염자. 느리지만 체력과 타격이 강하다.',
+    hp: 1.7,
+    speed: 1.45,
+    damage: 1.5,
+    sight: 8,
+  },
+} as const;
+export type ZombieKind = keyof typeof ZOMBIE_TYPES;
+export interface ZombieSpawn extends Pos {
+  kind: ZombieKind;
 }
 export interface Stage {
   id: string;
@@ -44,8 +98,8 @@ export interface Stage {
   objects: Prop[];
   objectives: Objective[];
   doors: (Pos & { opensAtMission: number })[];
-  zombies: Pos[];
-  wave: Pos[];
+  zombies: ZombieSpawn[];
+  wave: ZombieSpawn[];
   outdoor: boolean;
 }
 function map(w: number, h: number, blocks: Pos[], desks: Pos[] = []) {
@@ -80,9 +134,17 @@ export const STAGES: Stage[] = [
         name: '보건교사 윤서',
         x: 3,
         y: 3,
-        text: '평소 방송이 아니에요. 예비 퓨즈를 챙기고 함께 탈출해요. J 공격, K·L 스킬, E 상호작용을 기억하세요. 잠금 번호는 칠판에 있어요.',
+        text: '방금 복도에서 학생들이 변했어요. 아직 무기가 없으니 바닥의 돌을 던져 거리를 벌려요. 예비 퓨즈를 챙긴 뒤 비상 장비함으로 가요.',
       },
-      { id: 'bench', kind: 'bench', name: '교실 작업대', x: 5, y: 5 },
+      {
+        id: 'rubble',
+        kind: 'hint',
+        name: '깨진 창가의 돌',
+        x: 8,
+        y: 3,
+        text: 'J 또는 공격 버튼으로 바라보는 방향 3칸까지 돌을 던집니다. 감염자에게 세 번 맞혀 거리를 벌리세요.',
+      },
+      { id: 'gear', kind: 'gear', name: '비상 장비함', x: 10, y: 6 },
       { id: 'fuse', kind: 'item', name: '예비 퓨즈', x: 9, y: 3 },
       {
         id: 'board',
@@ -102,9 +164,19 @@ export const STAGES: Stage[] = [
         text: '윤서에게 이동해 상황을 확인하세요. WASD / 조이스틱, E 대화',
       },
       {
+        kind: 'practice',
+        target: 'rubble',
+        text: '돌로 감염자를 세 번 맞히세요. 바라보는 방향으로 J / 공격',
+      },
+      {
         kind: 'collect',
         target: 'fuse',
         text: '감염자를 피하거나 공격하며 예비 퓨즈를 확보하세요. [E]',
+      },
+      {
+        kind: 'equip',
+        target: 'gear',
+        text: '전원이 비상 장비함에서 선택한 직업의 무기를 챙기세요. [E]',
       },
       {
         kind: 'puzzle',
@@ -118,10 +190,10 @@ export const STAGES: Stage[] = [
         text: '문 너머 복도 입구에 모두 집결하세요. [E]',
       },
     ],
-    doors: [{ x: 14, y: 8, opensAtMission: 3 }],
+    doors: [{ x: 14, y: 8, opensAtMission: 5 }],
     zombies: [
-      { x: 11, y: 3 },
-      { x: 11, y: 8 },
+      { x: 11, y: 3, kind: 'student' },
+      { x: 11, y: 8, kind: 'runner' },
     ],
     wave: [],
   },
@@ -159,7 +231,7 @@ export const STAGES: Stage[] = [
         y: 3,
         text: '방송실의 비상 전원을 복구해 주세요. 전원이 들어오면 운동장 출입구가 열릴 거예요. 혼자 움직이지 마세요.',
       },
-      { id: 'bench', kind: 'bench', name: '동관 작업대', x: 5, y: 5 },
+
       {
         id: 'generator',
         kind: 'switch',
@@ -194,7 +266,11 @@ export const STAGES: Stage[] = [
       [22, 13],
       [10, 12],
       [23, 6],
-    ].map(([x, y]) => ({ x, y })),
+    ].map(([x, y], i) => ({
+      x,
+      y,
+      kind: (['student', 'runner', 'caretaker'] as const)[i % 3],
+    })),
     wave: [],
   },
   {
@@ -218,7 +294,6 @@ export const STAGES: Stage[] = [
     ),
     spawns,
     objects: [
-      { id: 'bench', kind: 'bench', name: '임시 작업대', x: 5, y: 5 },
       { id: 'west', kind: 'switch', name: '서쪽 전원', x: 4, y: 3 },
       { id: 'east', kind: 'switch', name: '동쪽 제어반', x: 17, y: 4 },
       { id: 'exit', kind: 'exit', name: '구조 차량', x: 19, y: 13 },
@@ -244,14 +319,14 @@ export const STAGES: Stage[] = [
     ],
     doors: [{ x: 18, y: 11, opensAtMission: 3 }],
     zombies: [
-      { x: 12, y: 3 },
-      { x: 16, y: 8 },
+      { x: 12, y: 3, kind: 'runner' },
+      { x: 16, y: 8, kind: 'caretaker' },
     ],
     wave: [
-      { x: 10, y: 2 },
-      { x: 12, y: 6 },
-      { x: 19, y: 7 },
-      { x: 15, y: 9 },
+      { x: 10, y: 2, kind: 'student' },
+      { x: 12, y: 6, kind: 'runner' },
+      { x: 19, y: 7, kind: 'caretaker' },
+      { x: 15, y: 9, kind: 'student' },
     ],
   },
 ];

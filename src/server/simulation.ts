@@ -1,5 +1,7 @@
 import {
   JOBS,
+  ZOMBIE_TYPES,
+  type ZombieSpawn,
   MOVE_MS,
   STAGES,
   stageFor,
@@ -60,6 +62,8 @@ export function newPlayer(
     name,
     skin,
     hardTickets: 0,
+    weaponAcquired: false,
+    rockHits: 0,
     x: 2,
     y: 5,
     dir: 'right',
@@ -95,7 +99,8 @@ export function newState(
     episodeId: 0,
     difficulty: 'normal',
     admissionId: null,
-    contentVersion: 3,
+    contentVersion: 4,
+    cutscene: null,
     runId: crypto.randomUUID(),
     phase: 'waiting',
     stageIndex: 0,
@@ -119,6 +124,7 @@ export function normalizeState(s: GameState) {
     s.contentVersion = 1;
     s.checkpoint = { stageIndex: 1, players: {} };
   }
+  s.cutscene ??= null;
   s.episodeId ??= 0;
   s.difficulty ??= 'normal';
   s.admissionId ??= null;
@@ -127,8 +133,21 @@ export function normalizeState(s: GameState) {
   for (const p of s.players) {
     p.skin ??= 'uniform';
     p.hardTickets ??= 0;
+    p.weaponAcquired ??= s.contentVersion < 4;
+    p.rockHits ??= s.contentVersion < 4 ? 3 : 0;
   }
-  for (const z of s.zombies) z.maxHp ??= 78;
+  if (s.contentVersion === 2 || s.contentVersion === 3) {
+    if (s.stageIndex === 0) s.mission = [0, 2, 4, 5][s.mission] ?? s.mission;
+    for (const saved of Object.values(s.checkpoint.players)) {
+      saved.weaponAcquired ??= true;
+      saved.rockHits ??= 3;
+    }
+    s.contentVersion = 4;
+  }
+  for (const z of s.zombies) {
+    z.maxHp ??= 78;
+    z.kind ??= 'student';
+  }
   return s;
 }
 export function setActiveClock(s: GameState, now: number, active: boolean) {
@@ -139,15 +158,23 @@ export function setActiveClock(s: GameState, now: number, active: boolean) {
     s.pausedAt = 0;
   }
 }
-function spawnZombies(s: GameState, points: Pos[], now: number, offset = 0) {
-  return points.map(({ x, y }, i) => ({
+function spawnZombies(
+  s: GameState,
+  points: ZombieSpawn[],
+  now: number,
+  offset = 0,
+) {
+  return points.map(({ x, y, kind }, i) => ({
     id: `${s.stageEpoch}:z${i + offset}`,
     x,
     y,
+    kind,
     spawnX: x,
     spawnY: y,
-    hp: DIFFICULTIES[s.difficulty].zombieHp,
-    maxHp: DIFFICULTIES[s.difficulty].zombieHp,
+    hp: Math.round(DIFFICULTIES[s.difficulty].zombieHp * ZOMBIE_TYPES[kind].hp),
+    maxHp: Math.round(
+      DIFFICULTIES[s.difficulty].zombieHp * ZOMBIE_TYPES[kind].hp,
+    ),
     moveAt: now + 1500,
     attackAt: 0,
     state: 'idle',
@@ -175,6 +202,8 @@ export function loadStage(
       hp: saved?.hp ?? Math.min(JOBS[p.job].hp, p.hp + 35),
       parts: saved?.parts ?? p.parts,
       upgrade: saved?.upgrade ?? p.upgrade,
+      weaponAcquired: saved?.weaponAcquired ?? p.weaponAcquired,
+      rockHits: saved?.rockHits ?? p.rockHits,
       ready: false,
       moveAt: now,
       attackAt: 0,
@@ -185,30 +214,78 @@ export function loadStage(
       input: { direction: null, attack: false, at: now },
     });
   }
+  if (s.contentVersion >= 4)
+    beginScene(s, (['outbreak', 'hall', 'yard'] as const)[index]);
   if (!restore)
     s.checkpoint = {
       stageIndex: index,
       players: Object.fromEntries(
         s.players.map((p) => [
           p.id,
-          { hp: p.hp, parts: p.parts, upgrade: p.upgrade },
+          {
+            hp: p.hp,
+            parts: p.parts,
+            upgrade: p.upgrade,
+            weaponAcquired: p.weaponAcquired,
+            rockHits: p.rockHits,
+          },
         ]),
       ),
     };
 }
+function beginScene(
+  s: GameState,
+  key: NonNullable<GameState['cutscene']>['key'],
+) {
+  s.cutscene = { id: crypto.randomUUID(), key, acknowledged: [] };
+  s.players.forEach(
+    (p) => (p.input = { direction: null, attack: false, at: s.now }),
+  );
+}
+function finishScene(s: GameState, now: number) {
+  const scene = s.cutscene;
+  if (
+    !scene ||
+    !s.players.some((p) => p.connected) ||
+    s.players.some((p) => p.connected && !scene.acknowledged.includes(p.id))
+  )
+    return;
+  s.cutscene = null;
+  if (scene.key === 'ending') {
+    s.phase = 'clear';
+    return;
+  }
+  if (s.defendUntil) s.defendUntil += Math.max(0, now - s.now);
+  s.players.forEach((p) => {
+    p.input = { direction: null, attack: false, at: now };
+    p.moveAt = now;
+  });
+  s.zombies.forEach((z) => {
+    z.moveAt = now + 1500;
+    z.attackAt = now + 1000;
+  });
+  s.now = now;
+}
 export function start(s: GameState, now: number) {
   s.startedAt = now;
   s.runId = crypto.randomUUID();
-  s.contentVersion = 3;
+  s.contentVersion = 4;
   for (const p of s.players) {
     p.hp = JOBS[p.job].hp;
-    p.parts = 3;
+    p.parts = 0;
+    p.weaponAcquired = false;
+    p.rockHits = 0;
     p.upgrade = 0;
   }
   loadStage(s, 0, now);
 }
 function advance(s: GameState, now: number) {
   s.mission++;
+  if (
+    objectiveFor(s)?.kind === 'practice' &&
+    s.players.reduce((n, p) => n + p.rockHits, 0) >= 3
+  )
+    s.mission++;
   const o = objectiveFor(s);
   s.notice = o?.text ?? '임무 완료';
   if (o?.kind === 'survive') {
@@ -220,7 +297,7 @@ function attack(
   s: GameState,
   p: Player,
   now: number,
-  range = JOBS[p.job].range,
+  range: number = JOBS[p.job].range,
   damage = JOBS[p.job].damage * (1 + p.upgrade * 0.2),
   push = false,
 ) {
@@ -235,6 +312,7 @@ function attack(
       (z) => z.hp > 0 && z.x === x && z.y === y && !hit.has(z.id),
     )) {
       hit.add(z.id);
+      if (!p.weaponAcquired) p.rockHits++;
       z.hp = Math.max(0, z.hp - damage);
       const nx = z.x + dir.x,
         ny = z.y + dir.y;
@@ -250,6 +328,11 @@ function attack(
       if (!z.hp) p.parts += 2;
     }
   }
+  if (
+    objectiveFor(s)?.kind === 'practice' &&
+    s.players.reduce((n, q) => n + q.rockHits, 0) >= 3
+  )
+    advance(s, now);
 }
 export function command(
   s: GameState,
@@ -259,7 +342,15 @@ export function command(
 ): string | undefined {
   const p = s.players.find((p) => p.id === id);
   if (!p) return '참가자가 아닙니다.';
+  if (c.type === 'scene-done') {
+    if (!s.cutscene || s.cutscene.id !== c.sceneId)
+      return '이미 끝난 장면입니다.';
+    if (!s.cutscene.acknowledged.includes(id)) s.cutscene.acknowledged.push(id);
+    finishScene(s, now);
+    return;
+  }
   if (c.type === 'input') {
+    if (s.cutscene) return;
     p.input = { direction: c.direction, attack: c.attack, at: now };
     return;
   }
@@ -305,7 +396,10 @@ export function command(
     return;
   }
   if (s.phase !== 'playing' || p.hp <= 0) return '현재 행동할 수 없습니다.';
+  if (s.cutscene) return '이야기를 확인한 뒤 진행하세요.';
   if (c.type === 'skill') {
+    if (!p.weaponAcquired)
+      return '비상 장비함에서 무기를 얻어야 스킬을 사용할 수 있습니다.';
     const i = c.slot - 1;
     if (now < p.skillAt[i]) return '스킬 재사용 대기 중입니다.';
     if (p.job === 'vanguard') {
@@ -327,6 +421,7 @@ export function command(
     return;
   }
   if (c.type === 'upgrade') {
+    if (s.episodeId === 0) return '에피소드 0에는 무기 작업대가 없습니다.';
     const b = stageFor(s).objects.find((o) => o.kind === 'bench');
     if (!b || distance(p, b) > 1) return '작업대에 가까이 가세요.';
     const cost = (p.upgrade + 1) * 3;
@@ -362,8 +457,19 @@ export function command(
       s.notice = target.text!;
       return;
     }
+    if (target.kind === 'gear' && objective?.kind === 'equip') {
+      p.weaponAcquired = true;
+      s.notice = `${p.name}: ${JOBS[p.job].weapon} 획득 · ${JOBS[p.job].skills.join(' / ')} 해금`;
+      if (s.players.every((q) => q.weaponAcquired)) {
+        advance(s, now);
+        beginScene(s, 'weapons');
+      }
+      return;
+    }
     if (target.kind === 'bench') return '작업대에서 강화 버튼을 사용하세요.';
     if (target.id !== objective?.target) return '현재 임무를 먼저 완료하세요.';
+    if (objective.kind === 'practice')
+      return '공격 버튼으로 돌을 세 번 맞히세요.';
     if (objective.kind === 'puzzle') return '세 자리 번호를 입력하세요.';
     if (objective.kind === 'survive') return '정문 개방 중입니다.';
     if (objective.kind === 'rally') {
@@ -372,7 +478,8 @@ export function command(
       )
         return '동료를 구조하고 전원이 출입구로 모이세요.';
       if (s.stageIndex === STAGES.length - 1 || s.contentVersion === 1) {
-        s.phase = 'clear';
+        if (s.contentVersion >= 4) beginScene(s, 'ending');
+        else s.phase = 'clear';
         s.notice =
           '학교 밖의 도시도 이미 멈춰 있었습니다. 금강 쪽 구조 신호를 따라, 다음 생존 기록이 시작됩니다.';
       } else loadStage(s, s.stageIndex + 1, now);
@@ -384,6 +491,10 @@ export function command(
   }
 }
 export function tick(s: GameState, now: number) {
+  if (s.cutscene) {
+    finishScene(s, now);
+    if (s.cutscene) return;
+  }
   s.now = now;
   if (s.phase !== 'playing') return;
   const rules = DIFFICULTIES[s.difficulty];
@@ -404,8 +515,9 @@ export function tick(s: GameState, now: number) {
       }
     }
     if (p.input.attack && now >= p.attackAt) {
-      p.attackAt = now + JOBS[p.job].attackMs;
-      attack(s, p, now);
+      p.attackAt = now + (p.weaponAcquired ? JOBS[p.job].attackMs : 520);
+      if (p.weaponAcquired) attack(s, p, now);
+      else attack(s, p, now, 3, 14);
     }
   }
   for (const z of s.zombies.filter((z) => z.hp > 0)) {
@@ -413,26 +525,26 @@ export function tick(s: GameState, now: number) {
       .filter((p) => p.hp > 0 && p.connected)
       .sort((a, b) => distance(a, z) - distance(b, z))[0];
     if (!target) continue;
-    const dist = distance(z, target);
+    const dist = distance(z, target),
+      archetype = ZOMBIE_TYPES[z.kind];
+    const damage = Math.round(rules.damage * archetype.damage);
     if (dist <= 1) {
       z.state = 'attack';
       if (now >= z.attackAt && now >= target.hitAt) {
         target.hp = Math.max(
           0,
           target.hp -
-            (now < target.shieldUntil
-              ? Math.ceil(rules.damage / 3)
-              : rules.damage),
+            (now < target.shieldUntil ? Math.ceil(damage / 3) : damage),
         );
         target.hitAt = now + 650;
-        z.attackAt = now + rules.attackMs;
+        z.attackAt = now + Math.round(rules.attackMs * archetype.speed);
       }
     } else if (now >= z.moveAt) {
-      z.moveAt = now + rules.moveMs;
-      z.state = dist <= 10 ? 'chase' : 'return';
+      z.moveAt = now + Math.round(rules.moveMs * archetype.speed);
+      z.state = dist <= archetype.sight ? 'chase' : 'return';
       const next = pathStep(
         z,
-        dist <= 10 ? target : { x: z.spawnX, y: z.spawnY },
+        dist <= archetype.sight ? target : { x: z.spawnX, y: z.spawnY },
         (x, y) => tileOpen(s, x, y),
       );
       if (

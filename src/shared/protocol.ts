@@ -1,4 +1,4 @@
-import type { Job } from './content';
+import type { Job, ZombieKind } from './content';
 import { isDifficulty, type Difficulty, type SkinId } from './rules';
 export type Direction = 'up' | 'down' | 'left' | 'right';
 export const DIR: Record<Direction, { x: number; y: number }> = {
@@ -9,6 +9,7 @@ export const DIR: Record<Direction, { x: number; y: number }> = {
 };
 export type Command =
   | { v: 1; type: 'input'; direction: Direction | null; attack: boolean }
+  | { v: 1; type: 'scene-done'; sceneId: string }
   | { v: 1; type: 'skill'; slot: 1 | 2 }
   | { v: 1; type: 'job'; job: Job }
   | { v: 1; type: 'ready'; ready: boolean }
@@ -33,6 +34,10 @@ export function parseCommand(raw: unknown): Command | null {
             direction: m.direction as Direction | null,
             attack: m.attack,
           }
+        : null;
+    case 'scene-done':
+      return typeof m.sceneId === 'string' && m.sceneId.length <= 80
+        ? { v: 1, type: 'scene-done', sceneId: m.sceneId }
         : null;
     case 'skill':
       return m.slot === 1 || m.slot === 2
@@ -75,6 +80,8 @@ export interface Player {
   name: string;
   skin: SkinId;
   hardTickets: number;
+  weaponAcquired: boolean;
+  rockHits: number;
   x: number;
   y: number;
   dir: Direction;
@@ -95,6 +102,7 @@ export interface Player {
 }
 export interface Zombie {
   id: string;
+  kind: ZombieKind;
   x: number;
   y: number;
   hp: number;
@@ -115,6 +123,11 @@ export interface GameState {
   difficulty: Difficulty;
   admissionId: string | null;
   contentVersion: number;
+  cutscene: {
+    id: string;
+    key: 'outbreak' | 'weapons' | 'hall' | 'yard' | 'ending';
+    acknowledged: string[];
+  } | null;
   runId: string;
   phase: 'waiting' | 'playing' | 'over' | 'clear';
   stageIndex: number;
@@ -130,7 +143,16 @@ export interface GameState {
   pausedAt: number;
   checkpoint: {
     stageIndex: number;
-    players: Record<string, { hp: number; parts: number; upgrade: number }>;
+    players: Record<
+      string,
+      {
+        hp: number;
+        parts: number;
+        upgrade: number;
+        weaponAcquired: boolean;
+        rockHits: number;
+      }
+    >;
   };
 }
 export interface Profile {

@@ -17,7 +17,9 @@ import type {
 } from '../shared/protocol';
 import { Input, phone, type Action } from './input';
 import { createGame } from './game';
-import { skinCanvas } from './art';
+import { skinCanvas, heroCanvas, drawStoryBackdrop } from './art';
+import { STORY } from '../shared/story';
+import { ZOMBIE_TYPES, type Job } from '../shared/content';
 const app = document.querySelector<HTMLElement>('#app')!,
   input = new Input();
 const esc = (v: unknown) =>
@@ -52,6 +54,9 @@ let page: Page = 'auth',
   retries = 0,
   toastTimer = 0,
   retryTimer = 0;
+let sceneId = '',
+  sceneLine = 0,
+  sceneStamp = '';
 let toastText = '',
   toastUntil = 0;
 let renderer: ReturnType<typeof createGame> | null = null;
@@ -100,7 +105,7 @@ const sendInput = () =>
   });
 input.onReset = sendInput;
 function block() {
-  input.blocked = page !== 'game' || modal || portrait;
+  input.blocked = page !== 'game' || modal || portrait || !!state?.cutscene;
   input.reset();
 }
 function orientation() {
@@ -278,7 +283,13 @@ function previews() {
       if (!isSkin(skin)) return;
       c.width = 32;
       c.height = 32;
-      c.getContext('2d')!.drawImage(skinCanvas(skin), 0, 0);
+      c.getContext('2d')!.drawImage(
+        c.dataset.job
+          ? heroCanvas(skin, c.dataset.job as Job, c.dataset.armed !== 'false')
+          : skinCanvas(skin),
+        0,
+        0,
+      );
     });
 }
 interface ShopItem {
@@ -441,7 +452,7 @@ function waiting() {
   if (!p) return;
   block();
   chrome(
-    `<main class="shell"><div class="heading"><div><div class="eyebrow">03 / ASSEMBLE</div><h1>${esc(s.title)}</h1><p>에피소드 ${s.episodeId} · ${EPISODES[s.episodeId]?.name ?? '이야기'} · ${DIFFICULTIES[s.difficulty].name}</p></div><button id="leave" class="secondary">방 나가기</button></div><section class="panel briefing"><div><h2>교실에서, 봉쇄선 너머로</h2><p>잠금장치를 풀고 방송실 전원을 복구하세요.<br>운동장 정문을 지키고 구조 차량까지 모두 함께 이동하세요.</p></div><div class="invite"><small>방 ID</small><code>${s.roomId}</code>${s.private ? `<small>비공개 초대 코드</small><code>${invite}</code>` : ''}<button id="copy" class="text-button">초대 정보 복사</button></div></section><div class="settings-row"><label>에피소드<select id="episode" ${s.host !== p.id ? 'disabled' : ''}>${EPISODES.map((e) => `<option value="${e.id}" ${e.id === s.episodeId ? 'selected' : ''} ${!e.available ? 'disabled' : ''}>에피소드 ${e.id} · ${e.name}${e.available ? '' : ' (준비 중)'}</option>`).join('')}</select></label><label>난이도<select id="difficulty" ${s.host !== p.id ? 'disabled' : ''}>${Object.entries(
+    `<main class="shell"><div class="heading"><div><div class="eyebrow">03 / ASSEMBLE</div><h1>${esc(s.title)}</h1><p>에피소드 ${s.episodeId} · ${EPISODES[s.episodeId]?.name ?? '이야기'} · ${DIFFICULTIES[s.difficulty].name}</p></div><button id="leave" class="secondary">방 나가기</button></div><section class="panel briefing"><div><h2>사태가 시작된 그날, 우리는 학생이었다.</h2><p>돌을 던져 버티고 비상 장비함에서 각자의 무기를 찾으세요.<br>교실 → 동관 → 운동장, 구간마다 이어지는 생존 이야기.</p></div><div class="invite"><small>방 ID</small><code>${s.roomId}</code>${s.private ? `<small>비공개 초대 코드</small><code>${invite}</code>` : ''}<button id="copy" class="text-button">초대 정보 복사</button></div></section><div class="settings-row"><label>에피소드<select id="episode" ${s.host !== p.id ? 'disabled' : ''}>${EPISODES.map((e) => `<option value="${e.id}" ${e.id === s.episodeId ? 'selected' : ''} ${!e.available ? 'disabled' : ''}>에피소드 ${e.id} · ${e.name}${e.available ? '' : ' (준비 중)'}</option>`).join('')}</select></label><label>난이도<select id="difficulty" ${s.host !== p.id ? 'disabled' : ''}>${Object.entries(
       DIFFICULTIES,
     )
       .map(
@@ -455,15 +466,28 @@ function waiting() {
       (_, i) => {
         const q = s.players[i];
         return q
-          ? `<article class="panel party-slot"><small>0${i + 1} ${q.id === s.host ? '방장' : ''}</small><canvas data-skin="${q.skin}"></canvas><h3>${esc(q.name)}</h3><p>${JOBS[q.job].name}</p><p class="${s.difficulty === 'hard' && !q.hardTickets ? 'error' : 'gold'}">에피소드 ${s.episodeId} 티켓 ${q.hardTickets}장</p><strong>${!q.connected ? '재접속 대기' : q.ready ? '준비 완료' : '준비 중'}</strong></article>`
+          ? `<article class="panel party-slot"><small>0${i + 1} ${q.id === s.host ? '방장' : ''}</small><canvas data-skin="${q.skin}" data-job="${q.job}"></canvas><h3>${esc(q.name)}</h3><p>${JOBS[q.job].character} · ${JOBS[q.job].name}</p><p class="${s.difficulty === 'hard' && !q.hardTickets ? 'error' : 'gold'}">에피소드 ${s.episodeId} 티켓 ${q.hardTickets}장</p><strong>${!q.connected ? '재접속 대기' : q.ready ? '준비 완료' : '준비 중'}</strong></article>`
           : '<article class="panel party-slot empty"><span>＋</span><p>동료를 기다리는 중</p></article>';
       },
     ).join(
       '',
-    )}</div><div class="settings-row"><label>직업<select id="job"><option value="vanguard" ${p.job === 'vanguard' ? 'selected' : ''}>선봉대 · 저지</option><option value="medic" ${p.job === 'medic' ? 'selected' : ''}>의무대 · 회복</option></select></label><button id="ready" class="primary">${p.ready ? '준비 취소' : '준비 완료'}</button>${s.host === p.id ? `<button id="start" class="primary" ${s.players.some((q) => !q.ready || !q.connected) ? 'disabled' : ''}>작전 시작 →</button>` : ''}</div></main>`,
+    )}</div><section class="character-select"><h2>주연 캐릭터 · 직업 선택</h2><p class="fine">방에서 선택하고 시작 후 무기를 얻습니다. 같은 캐릭터를 함께 선택할 수 있습니다. 스킨은 의상만 바꿉니다.</p><div class="hero-grid">${(Object.entries(JOBS) as [Job, (typeof JOBS)[Job]][]).map(([id, job]) => `<button class="panel hero-card ${p.job === id ? 'selected' : ''}" data-job-choice="${id}" aria-pressed="${p.job === id}"><canvas data-skin="${p.skin}" data-job="${id}"></canvas><span><small>${job.identity} / ${job.name}</small><strong>${job.character}</strong><span>${job.bio}</span><b>${job.weapon} · ${job.skills.join(' / ')}</b></span></button>`).join('')}</div></section><details class="enemy-guide"><summary>학교 감염자 도감 · 3종</summary>${Object.values(
+      ZOMBIE_TYPES,
+    )
+      .map((z) => `<p><strong>${z.name}</strong> — ${z.concept}</p>`)
+      .join(
+        '',
+      )}</details><div class="settings-row"><label>직업<select id="job"><option value="vanguard" ${p.job === 'vanguard' ? 'selected' : ''}>선봉대 · 저지</option><option value="medic" ${p.job === 'medic' ? 'selected' : ''}>의무대 · 회복</option></select></label><button id="ready" class="primary">${p.ready ? '준비 취소' : '준비 완료'}</button>${s.host === p.id ? `<button id="start" class="primary" ${s.players.some((q) => !q.ready || !q.connected) ? 'disabled' : ''}>작전 시작 →</button>` : ''}</div></main>`,
   );
   previews();
   click('#leave', () => void leave());
+  document
+    .querySelectorAll<HTMLElement>('[data-job-choice]')
+    .forEach(
+      (el) =>
+        (el.onclick = () =>
+          send({ v: 1, type: 'job', job: el.dataset.jobChoice as Job })),
+    );
   click('#ready', () => send({ v: 1, type: 'ready', ready: !p.ready }));
   click('#start', () => send({ v: 1, type: 'start' }));
   click('#refresh-tickets', () => send({ v: 1, type: 'refresh' }));
@@ -497,8 +521,9 @@ function gameScreen() {
   modal = false;
   lastEpoch = -1;
   lastMission = -1;
+  sceneStamp = '';
   chrome(
-    `<main class="game-shell"><aside class="mission-panel"><div id="stage-progress" class="eyebrow"></div><h2>탈출 불가능한<br>학교</h2><p id="difficulty-label" class="tag"></p><p id="checkpoint" class="fine"></p><div class="mission-box"><small>현재 목표</small><h3 id="mission"></h3></div><div class="eyebrow">SURVIVORS</div><div id="team"></div><div class="sidebar-bottom"><span id="connection">연결됨</span><button id="menu" class="secondary">메뉴 / 설정 ESC</button></div></aside><section class="play-area"><div class="map-heading"><span id="map-location"></span><span id="elapsed"></span></div><div id="game-canvas"></div><div class="overlay"><div id="self-hud"></div><div id="notice" role="status"></div></div><div class="touch-controls"><div id="joystick" aria-label="이동 조이스틱"><span></span><b>이동</b></div><div class="combat"><button id="skill1" data-action="skill1"></button><button id="skill2" data-action="skill2"></button><button id="interact" data-action="interact">상호작용 E</button><button id="attack">공격 J</button></div></div><div class="keyboard-help">WASD / ↑↓←→ 이동　 J 공격　 K · L 스킬　 E 상호작용　 U 작업대</div></section></main>`,
+    `<main class="game-shell"><aside class="mission-panel"><div id="stage-progress" class="eyebrow"></div><h2>탈출 불가능한<br>학교</h2><p id="difficulty-label" class="tag"></p><p id="checkpoint" class="fine"></p><div class="mission-box"><small>현재 목표</small><h3 id="mission"></h3></div><div class="eyebrow">SURVIVORS</div><div id="team"></div><div class="sidebar-bottom"><span id="connection">연결됨</span><button id="menu" class="secondary">메뉴 / 설정 ESC</button></div></aside><section class="play-area"><div class="map-heading"><span id="map-location"></span><span id="elapsed"></span></div><div id="game-canvas"></div><div class="overlay"><div id="self-hud"></div><div id="notice" role="status"></div></div><div class="touch-controls"><div id="joystick" aria-label="이동 조이스틱"><span></span><b>이동</b></div><div class="combat"><button id="skill1" data-action="skill1"></button><button id="skill2" data-action="skill2"></button><button id="interact" data-action="interact">상호작용 E</button><button id="attack">공격 J</button></div></div><div class="keyboard-help">WASD / ↑↓←→ 이동　 J 공격　 K · L 스킬　 E 상호작용　 무기 획득 후 K · L 스킬</div></section></main>`,
   );
   renderer = createGame(document.querySelector('#game-canvas')!);
   renderer.scene.localId = profile!.id;
@@ -541,7 +566,7 @@ function updateGame() {
     )
     .join('');
   document.querySelector('#self-hud')!.innerHTML =
-    `${JOBS[p.job].name} <strong>${p.hp} / ${JOBS[p.job].hp} HP</strong> <span class="gold">부품 ${p.parts} · 강화 +${p.upgrade}</span>`;
+    `${JOBS[p.job].character} · ${JOBS[p.job].name} <strong>${p.hp} / ${JOBS[p.job].hp} HP</strong> <span class="gold">${p.weaponAcquired ? JOBS[p.job].weapon : '돌 던지기 · 무기 미획득'}</span>`;
   document.querySelector('#notice')!.textContent = s.notice;
   const seconds = Math.max(0, Math.floor((s.now - s.startedAt) / 1000));
   document.querySelector('#elapsed')!.textContent =
@@ -549,8 +574,12 @@ function updateGame() {
   for (const slot of [1, 2] as const) {
     const el = document.querySelector<HTMLButtonElement>('#skill' + slot)!,
       remain = Math.max(0, Math.ceil((p.skillAt[slot - 1] - s.now) / 1000));
-    el.textContent = remain ? remain + '초' : JOBS[p.job].skills[slot - 1];
-    el.disabled = remain > 0 || !p.hp;
+    el.textContent = !p.weaponAcquired
+      ? '무기 획득 후'
+      : remain
+        ? remain + '초'
+        : JOBS[p.job].skills[slot - 1];
+    el.disabled = !p.weaponAcquired || !!s.cutscene || remain > 0 || !p.hp;
   }
   document.querySelector<HTMLButtonElement>('#interact')!.disabled =
     !stage.objects.some(
@@ -559,6 +588,18 @@ function updateGame() {
     !s.players.some(
       (q) => !q.hp && Math.abs(p.x - q.x) + Math.abs(p.y - q.y) <= 1,
     );
+  document.querySelector('#attack')!.textContent = p.weaponAcquired
+    ? '공격 J'
+    : '돌 던지기 J';
+  if (s.cutscene) {
+    showCutscene();
+    lastMission = s.mission;
+    return;
+  }
+  if (modalKind === 'cutscene') {
+    closeModal();
+    sceneStamp = '';
+  }
   if (s.phase === 'clear' || s.phase === 'over') {
     if (modalKind !== 'result') result();
   } else if (lastMission !== s.mission) {
@@ -573,6 +614,41 @@ function updateGame() {
     }
   }
   lastMission = s.mission;
+}
+function showCutscene(force = false) {
+  const s = state!,
+    scene = s.cutscene;
+  if (!scene) return;
+  if (sceneId !== scene.id) {
+    sceneId = scene.id;
+    sceneLine = 0;
+    sceneStamp = '';
+    clearToast();
+  }
+  const stamp = scene.id + scene.acknowledged.join(',');
+  if (!force && sceneStamp === stamp && modalKind === 'cutscene') return;
+  sceneStamp = stamp;
+  const story = STORY[scene.key],
+    line = story.lines[sceneLine],
+    done = scene.acknowledged.includes(profile!.id),
+    connected = s.players.filter((p) => p.connected),
+    count = connected.filter((p) => scene.acknowledged.includes(p.id)).length;
+  dialog(
+    `<div class="cutscene" data-scene="${scene.key}"><div class="scene-top"><span>${story.location}</span><span>STORY ${sceneLine + 1} / ${story.lines.length}</span></div><h2>${story.title}</h2><canvas id="story-backdrop" aria-label="${story.title} 도트 배경"></canvas><div class="scene-dialogue">${line.job ? `<canvas class="scene-portrait" data-skin="${s.players.find((p) => p.job === line.job)?.skin ?? 'uniform'}" data-job="${line.job}" data-armed="${scene.key !== 'outbreak'}"></canvas>` : '<span class="broadcast-icon">▥</span>'}<div><strong>${line.speaker}</strong><p>${esc(line.text)}</p></div></div><div class="scene-actions"><span>${done ? `동료를 기다립니다 · ${count}/${connected.length}명 확인` : '이야기 중에는 모두의 전투와 이동이 멈춥니다.'}</span><button id="scene-next" class="primary" ${done ? 'disabled' : ''}>${done ? '전원 확인 대기' : sceneLine === story.lines.length - 1 ? '장면 확인' : '다음 대사 →'}</button></div></div>`,
+    'cutscene',
+  );
+  drawStoryBackdrop(
+    document.querySelector<HTMLCanvasElement>('#story-backdrop')!,
+    story.setting,
+    scene.key !== 'outbreak',
+  );
+  previews();
+  click('#scene-next', () => {
+    if (sceneLine < story.lines.length - 1) {
+      sceneLine++;
+      showCutscene(true);
+    } else send({ v: 1, type: 'scene-done', sceneId: scene.id });
+  });
 }
 function dialog(html: string, kind = 'other') {
   modal = true;
@@ -606,6 +682,10 @@ function puzzle() {
   click('#close-puzzle', closeModal);
 }
 function bench() {
+  if (state?.episodeId === 0) {
+    flash('에피소드 0에는 작업대가 없습니다. 비상 장비함에서 무기를 얻으세요.');
+    return;
+  }
   const p = state?.players.find((p) => p.id === profile?.id);
   if (!p) return;
   dialog(
@@ -650,7 +730,7 @@ function result() {
         ? { xp: 100, coins: 50 }
         : DIFFICULTIES[s.difficulty];
   dialog(
-    `<div class="eyebrow">EPISODE ${s.episodeId} / ${clear ? 'COMPLETE' : 'RETRY'}</div><h2>${clear ? '우리는 살아남았다.' : '아직 끝이 아닙니다.'}</h2><p>${esc(s.notice)}</p>${clear ? `<p>에피소드 ${s.episodeId} · ${DIFFICULTIES[s.difficulty].name} 클리어<br>보상 ${r.xp} XP · ${r.coins} C</p>${s.difficulty === 'normal' && s.contentVersion >= 2 ? `<p class="gold">에피소드 ${s.episodeId} 하드 티켓 +1장</p>` : ''}<p class="fine">다음 이야기: 에피소드 ${s.episodeId + 1} (준비 중)</p>` : `<p>체크포인트: ${STAGES[s.checkpoint.stageIndex].name}<br>HP·부품·강화는 구간 진입 당시로 복원됩니다.<br>하드 입장 후 재도전은 티켓을 추가 소모하지 않습니다.</p>${s.host === profile!.id ? '<button id="retry" class="primary">체크포인트 재도전</button><button id="restart" class="secondary">처음부터 다시</button>' : ''}`}<button id="leave" class="secondary">로비로 돌아가기</button>`,
+    `<div class="eyebrow">EPISODE ${s.episodeId} / ${clear ? 'COMPLETE' : 'RETRY'}</div><h2>${clear ? '우리는 살아남았다.' : '아직 끝이 아닙니다.'}</h2><p>${esc(s.notice)}</p>${clear ? `<p>에피소드 ${s.episodeId} · ${DIFFICULTIES[s.difficulty].name} 클리어<br>보상 ${r.xp} XP · ${r.coins} C</p>${s.difficulty === 'normal' && s.contentVersion >= 2 ? `<p class="gold">에피소드 ${s.episodeId} 하드 티켓 +1장</p>` : ''}<p class="fine">다음 이야기: 에피소드 ${s.episodeId + 1} (준비 중)</p>` : `<p>체크포인트: ${STAGES[s.checkpoint.stageIndex].name}<br>HP·무기 획득 상태는 구간 진입 당시로 복원됩니다.<br>하드 입장 후 재도전은 티켓을 추가 소모하지 않습니다.</p>${s.host === profile!.id ? '<button id="retry" class="primary">체크포인트 재도전</button><button id="restart" class="secondary">처음부터 다시</button>' : ''}`}<button id="leave" class="secondary">로비로 돌아가기</button>`,
     'result',
   );
   for (const type of ['retry', 'restart'] as const)
@@ -663,6 +743,7 @@ function result() {
 input.onAction = (a: Action) => {
   if (portrait) return;
   if (a === 'menu') {
+    if (state?.cutscene) return;
     if (modal) closeModal();
     else menu();
     return;
