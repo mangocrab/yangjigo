@@ -471,13 +471,32 @@ function waiting() {
       },
     ).join(
       '',
-    )}</div><section class="character-select"><h2>주연 캐릭터 · 직업 선택</h2><p class="fine">방에서 선택하고 시작 후 무기를 얻습니다. 같은 캐릭터를 함께 선택할 수 있습니다. 스킨은 의상만 바꿉니다.</p><div class="hero-grid">${(Object.entries(JOBS) as [Job, (typeof JOBS)[Job]][]).map(([id, job]) => `<button class="panel hero-card ${p.job === id ? 'selected' : ''}" data-job-choice="${id}" aria-pressed="${p.job === id}"><canvas data-skin="${p.skin}" data-job="${id}"></canvas><span><small>${job.identity} / ${job.name}</small><strong>${job.character}</strong><span>${job.bio}</span><b>${job.weapon} · ${job.skills.join(' / ')}</b></span></button>`).join('')}</div></section><details class="enemy-guide"><summary>학교 감염자 도감 · 3종</summary>${Object.values(
+    )}</div><section class="character-select"><h2>주연 캐릭터 · 직업 선택</h2><p class="fine">방에서 선택하고 시작 후 무기를 얻습니다. 직업은 한 명씩만 선택할 수 있습니다. 다른 동료가 선택한 직업은 잠깁니다. 스킨은 의상만 바꿉니다.</p><div class="hero-grid">${(
+      Object.entries(JOBS) as [Job, (typeof JOBS)[Job]][]
+    )
+      .map(([id, job]) => {
+        const owner = s.players.find((q) => q.job === id),
+          taken = owner && owner.id !== p.id;
+        return `<button class="panel hero-card ${p.job === id ? 'selected' : ''}" data-job-choice="${id}" aria-pressed="${p.job === id}" ${taken ? 'disabled' : ''}><canvas data-skin="${p.skin}" data-job="${id}"></canvas><span><small>${job.identity} / ${job.name}</small><strong>${job.character}</strong><span>${job.bio}</span><b>${job.weapon} · ${job.skills.join(' / ')}</b><em>${taken ? `${esc(owner.name)}님 선택 중` : p.job === id ? '내가 선택한 직업' : '선택 가능'}</em></span></button>`;
+      })
+      .join(
+        '',
+      )}</div></section><details class="enemy-guide"><summary>학교 감염자 도감 · 3종</summary>${Object.values(
       ZOMBIE_TYPES,
     )
       .map((z) => `<p><strong>${z.name}</strong> — ${z.concept}</p>`)
       .join(
         '',
-      )}</details><div class="settings-row"><label>직업<select id="job"><option value="vanguard" ${p.job === 'vanguard' ? 'selected' : ''}>선봉대 · 저지</option><option value="medic" ${p.job === 'medic' ? 'selected' : ''}>의무대 · 회복</option></select></label><button id="ready" class="primary">${p.ready ? '준비 취소' : '준비 완료'}</button>${s.host === p.id ? `<button id="start" class="primary" ${s.players.some((q) => !q.ready || !q.connected) ? 'disabled' : ''}>작전 시작 →</button>` : ''}</div></main>`,
+      )}</details><div class="settings-row"><label>직업<select id="job">${(
+      Object.entries(JOBS) as [Job, (typeof JOBS)[Job]][]
+    )
+      .map(([id, job]) => {
+        const owner = s.players.find((q) => q.job === id && q.id !== p.id);
+        return `<option value="${id}" ${p.job === id ? 'selected' : ''} ${owner ? 'disabled' : ''}>${job.name} · ${job.character}${owner ? ' (선택 중)' : ''}</option>`;
+      })
+      .join(
+        '',
+      )}</select></label><button id="ready" class="primary">${p.ready ? '준비 취소' : '준비 완료'}</button>${s.host === p.id ? `<button id="start" class="primary" ${s.players.some((q) => !q.ready || !q.connected) ? 'disabled' : ''}>작전 시작 →</button>` : ''}</div></main>`,
   );
   previews();
   click('#leave', () => void leave());
@@ -495,7 +514,7 @@ function waiting() {
     send({
       v: 1,
       type: 'job',
-      job: (e.target as HTMLSelectElement).value as 'medic' | 'vanguard',
+      job: (e.target as HTMLSelectElement).value as Job,
     });
   for (const id of ['episode', 'difficulty'])
     document.querySelector<HTMLSelectElement>('#' + id)!.onchange = () =>

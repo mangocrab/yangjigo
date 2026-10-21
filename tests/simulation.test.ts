@@ -9,8 +9,16 @@ import {
   pathStep,
   loadStage,
   setActiveClock,
+  vacantJob,
 } from '../src/server/simulation';
-import { STAGES, JOBS, ZOMBIE_TYPES, tileOpen } from '../src/shared/content';
+import {
+  STAGES,
+  JOBS,
+  JOB_IDS,
+  MAX_PLAYERS,
+  ZOMBIE_TYPES,
+  tileOpen,
+} from '../src/shared/content';
 import { DIFFICULTIES, type Difficulty } from '../src/shared/rules';
 import { parseCommand } from '../src/shared/protocol';
 import { vectorDirection } from '../src/client/input';
@@ -32,7 +40,10 @@ function enter(s: ReturnType<typeof newState>, index: number, now: number) {
 const setup = (difficulty: Difficulty = 'normal') => {
   const s = newState('r', '작전', '세종-1', false, 'a');
   s.difficulty = difficulty;
-  s.players = [newPlayer('a', '선봉', 1000), newPlayer('b', '의무', 1000)];
+  s.players = [
+    newPlayer('a', '선봉', 1000),
+    newPlayer('b', '의무', 1000, 'uniform', 'medic'),
+  ];
   s.players.forEach((p) => (p.connected = true));
   start(s, 1000);
   acknowledge(s);
@@ -457,4 +468,126 @@ it('플레이 중에는 직업/주연을 바꿀 수 없음', () => {
     '대기실',
   );
   expect(s.players[0].job).toBe('vanguard');
+});
+
+describe('4인 직업 독점과 신규 역할', () => {
+  it('최대 인원 이상의 직업과 검증된 4종 프로토콜', () => {
+    expect(JOB_IDS.length).toBeGreaterThanOrEqual(MAX_PLAYERS);
+    for (const job of JOB_IDS)
+      expect(parseCommand({ v: 1, type: 'job', job })).toEqual({
+        v: 1,
+        type: 'job',
+        job,
+      });
+    expect(parseCommand({ v: 1, type: 'job', job: '__proto__' })).toBeNull();
+  });
+  it('참가 때 빈 직업을 배정하며 끊긴 동료의 직업도 퇴장 전까지 예약', () => {
+    const s = newState('r', '작전', '세종-1', false, 'a');
+    for (let i = 0; i < 4; i++) {
+      const job = vacantJob(s);
+      expect(job).toBeTruthy();
+      s.players.push(newPlayer(String(i), '대원', 0, 'uniform', job));
+    }
+    expect(new Set(s.players.map((p) => p.job)).size).toBe(4);
+    s.players[1].connected = false;
+    expect(vacantJob(s)).toBeUndefined();
+    s.players.splice(1, 1);
+    expect(vacantJob(s)).toBe('medic');
+  });
+  it('동일 직업 거부 시 원래 직업·HP·준비 보존, 같은 직업 재선택은 무변경', () => {
+    const s = setup();
+    s.phase = 'waiting';
+    const p = s.players[0];
+    p.ready = true;
+    expect(
+      command(s, 'a', { v: 1, type: 'job', job: 'medic' }, 2000),
+    ).toContain('이미');
+    expect([p.job, p.hp, p.ready]).toEqual(['vanguard', 140, true]);
+    command(s, 'a', { v: 1, type: 'job', job: 'vanguard' }, 2000);
+    expect(p.ready).toBe(true);
+    command(s, 'a', { v: 1, type: 'job', job: 'ranger' }, 2000);
+    expect([p.job, p.hp, p.ready]).toEqual(['ranger', 90, false]);
+  });
+  it('동시에 같은 빈 직업을 요청하면 첫 요청만 성공, 중복 조합은 시작 불가', () => {
+    const s = setup();
+    s.phase = 'waiting';
+    expect(
+      command(s, 'a', { v: 1, type: 'job', job: 'engineer' }, 2000),
+    ).toBeUndefined();
+    expect(
+      command(s, 'b', { v: 1, type: 'job', job: 'engineer' }, 2000),
+    ).toContain('이미');
+    s.players[1].job = 'engineer';
+    s.players.forEach((p) => (p.ready = true));
+    expect(command(s, 'a', { v: 1, type: 'start' }, 2000)).toContain('중복');
+    expect(s.phase).toBe('waiting');
+  });
+  it('기존 중복 대기실을 복원하면 4종으로 나누고 변경한 참가자의 준비 해제', () => {
+    const s = setup();
+    s.phase = 'waiting';
+    s.players.push(newPlayer('c', '셋', 0), newPlayer('d', '넷', 0));
+    s.players.forEach((p) => {
+      p.job = 'vanguard';
+      p.ready = true;
+    });
+    normalizeState(s);
+    expect(new Set(s.players.map((p) => p.job)).size).toBe(4);
+    expect(s.players[0].ready).toBe(true);
+    expect(s.players.slice(1).every((p) => !p.ready)).toBe(true);
+  });
+  it('수색대 집중 사격의 거리·벽 차단과 6초 신속 장전', () => {
+    const s = setup(),
+      p = s.players[0];
+    p.job = 'ranger';
+    p.weaponAcquired = true;
+    Object.assign(p, { x: 2, y: 3, dir: 'right' });
+    s.zombies = [{ ...s.zombies[0], x: 7, y: 3, moveAt: Infinity }];
+    command(s, 'a', { v: 1, type: 'skill', slot: 1 }, 1000);
+    expect(s.zombies[0].hp).toBe(24);
+    command(s, 'a', { v: 1, type: 'skill', slot: 2 }, 1000);
+    expect(p.focusUntil).toBe(7000);
+    command(
+      s,
+      'a',
+      { v: 1, type: 'input', direction: null, attack: true },
+      1100,
+    );
+    tick(s, 1100);
+    expect(p.attackAt).toBe(1480);
+    Object.assign(p, { x: 13, y: 8, dir: 'right' });
+    s.zombies = [{ ...s.zombies[0], hp: 78, x: 15, y: 8 }];
+    p.skillAt[0] = 0;
+    command(s, 'a', { v: 1, type: 'skill', slot: 1 }, 2000);
+    expect(s.zombies[0].hp).toBe(78);
+  });
+  it('공작대 범위 타격·기절·동료 방벽과 사거리 밖 적 보호', () => {
+    const s = setup(),
+      p = s.players[0];
+    p.job = 'engineer';
+    p.weaponAcquired = true;
+    s.zombies = [
+      { ...s.zombies[0], x: 3, y: 5 },
+      { ...s.zombies[1], id: 'far', x: 8, y: 3 },
+    ];
+    command(s, 'a', { v: 1, type: 'skill', slot: 1 }, 1000);
+    expect(s.zombies[0].hp).toBe(42);
+    expect(s.zombies[0].stunUntil).toBe(2500);
+    const hp = p.hp;
+    tick(s, 2000);
+    expect(p.hp).toBe(hp);
+    expect(s.zombies[1].hp).toBe(s.zombies[1].maxHp);
+    command(s, 'a', { v: 1, type: 'skill', slot: 2 }, 2000);
+    expect(s.players.every((q) => q.shieldUntil === 5000)).toBe(true);
+  });
+  it('공작대 전류가 벽을 넘어 피해를 주지 않음', () => {
+    const s = setup(),
+      p = s.players[0];
+    p.job = 'engineer';
+    p.weaponAcquired = true;
+    Object.assign(p, { x: 13, y: 8 });
+    s.zombies = [{ ...s.zombies[0], x: 15, y: 8 }];
+    command(s, 'a', { v: 1, type: 'skill', slot: 1 }, 1000);
+    expect(s.zombies[0].hp).toBe(78);
+    expect(s.zombies[0].stunUntil).toBe(0);
+  });
 });

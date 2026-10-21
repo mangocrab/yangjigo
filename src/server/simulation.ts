@@ -1,5 +1,7 @@
 import {
   JOBS,
+  JOB_IDS,
+  type Job,
   ZOMBIE_TYPES,
   type ZombieSpawn,
   MOVE_MS,
@@ -56,6 +58,7 @@ export function newPlayer(
   name: string,
   now: number,
   skin: SkinId = 'uniform',
+  job: Job = 'vanguard',
 ): Player {
   return {
     id,
@@ -67,8 +70,8 @@ export function newPlayer(
     x: 2,
     y: 5,
     dir: 'right',
-    hp: 140,
-    job: 'vanguard',
+    hp: JOBS[job].hp,
+    job,
     ready: false,
     connected: false,
     lastSeen: now,
@@ -76,6 +79,8 @@ export function newPlayer(
     attackAt: 0,
     skillAt: [0, 0],
     shieldUntil: 0,
+    focusUntil: 0,
+    attackEffect: 'weapon',
     hitAt: 0,
     attackUntil: 0,
     parts: 0,
@@ -133,6 +138,8 @@ export function normalizeState(s: GameState) {
   for (const p of s.players) {
     p.skin ??= 'uniform';
     p.hardTickets ??= 0;
+    p.focusUntil ??= 0;
+    p.attackEffect ??= 'weapon';
     p.weaponAcquired ??= s.contentVersion < 4;
     p.rockHits ??= s.contentVersion < 4 ? 3 : 0;
   }
@@ -147,8 +154,33 @@ export function normalizeState(s: GameState) {
   for (const z of s.zombies) {
     z.maxHp ??= 78;
     z.kind ??= 'student';
+    z.stunUntil ??= 0;
+  }
+  if (s.phase === 'waiting') {
+    const occupied = new Set<Job>();
+    for (const p of s.players) {
+      if (occupied.has(p.job)) {
+        const free = JOB_IDS.find(
+          (job) =>
+            !occupied.has(job) &&
+            !s.players.some(
+              (q) => q !== p && !occupied.has(q.job) && q.job === job,
+            ),
+        );
+        const replacement = free ?? JOB_IDS.find((job) => !occupied.has(job));
+        if (replacement) {
+          p.job = replacement;
+          p.hp = JOBS[replacement].hp;
+          p.ready = false;
+        }
+      }
+      occupied.add(p.job);
+    }
   }
   return s;
+}
+export function vacantJob(s: Pick<GameState, 'players'>): Job | undefined {
+  return JOB_IDS.find((job) => !s.players.some((p) => p.job === job));
 }
 export function setActiveClock(s: GameState, now: number, active: boolean) {
   if (s.phase !== 'playing') return;
@@ -178,6 +210,7 @@ function spawnZombies(
     moveAt: now + 1500,
     attackAt: 0,
     state: 'idle',
+    stunUntil: 0,
   }));
 }
 export function loadStage(
@@ -210,6 +243,8 @@ export function loadStage(
       attackUntil: 0,
       hitAt: 0,
       shieldUntil: 0,
+      focusUntil: 0,
+      attackEffect: 'weapon',
       skillAt: [0, 0],
       input: { direction: null, attack: false, at: now },
     });
@@ -302,6 +337,7 @@ function attack(
   push = false,
 ) {
   p.attackUntil = now + 180;
+  p.attackEffect = 'weapon';
   const dir = DIR[p.dir],
     hit = new Set<string>();
   for (let i = 1; i <= range; i++) {
@@ -370,14 +406,27 @@ export function command(
   if (c.type === 'job' || c.type === 'ready') {
     if (s.phase !== 'waiting') return '대기실에서만 변경할 수 있습니다.';
     if (c.type === 'job') {
+      if (p.job === c.job) return;
+      const occupant = s.players.find((q) => q.id !== id && q.job === c.job);
+      if (occupant)
+        return `이미 ${occupant.name}님이 선택한 직업입니다. 다른 직업을 선택하세요.`;
       p.job = c.job;
       p.hp = JOBS[p.job].hp;
       p.ready = false;
-    } else p.ready = c.ready;
+    } else {
+      if (c.ready && s.players.some((q) => q.id !== id && q.job === p.job))
+        return '직업이 중복됩니다. 다른 직업을 선택하세요.';
+      p.ready = c.ready;
+    }
     return;
   }
   if (c.type === 'start' || c.type === 'retry' || c.type === 'restart') {
     if (id !== s.host) return '방장만 시작할 수 있습니다.';
+    if (
+      c.type === 'start' &&
+      new Set(s.players.map((q) => q.job)).size !== s.players.length
+    )
+      return '직업이 중복됩니다. 각자 다른 직업을 선택하세요.';
     if (s.players.some((q) => !q.connected))
       return '모든 동료가 연결되어야 합니다.';
     if (
@@ -405,7 +454,7 @@ export function command(
     if (p.job === 'vanguard') {
       if (c.slot === 1) attack(s, p, now, 2, 42, true);
       else p.shieldUntil = now + 5000;
-    } else {
+    } else if (p.job === 'medic') {
       const targets = s.players.filter((q) => distance(p, q) <= 3);
       if (c.slot === 1)
         targets
@@ -416,6 +465,40 @@ export function command(
         if (!q) return '가까운 곳에 쓰러진 동료가 없습니다.';
         q.hp = 50;
       }
+    } else if (p.job === 'ranger') {
+      if (c.slot === 1) attack(s, p, now, 6, 54);
+      else p.focusUntil = now + 6000;
+    } else if (p.job === 'engineer') {
+      if (c.slot === 1) {
+        p.attackUntil = now + 260;
+        p.attackEffect = 'pulse';
+        const area = new Set([`${p.x},${p.y}`]),
+          queue = [{ x: p.x, y: p.y, steps: 0 }];
+        for (let n = 0; n < queue.length; n++) {
+          const current = queue[n];
+          if (current.steps >= 2) continue;
+          for (const d of Object.values(DIR)) {
+            const x = current.x + d.x,
+              y = current.y + d.y,
+              key = `${x},${y}`;
+            if (tileOpen(s, x, y) && !area.has(key)) {
+              area.add(key);
+              queue.push({ x, y, steps: current.steps + 1 });
+            }
+          }
+        }
+        for (const z of s.zombies.filter(
+          (z) => z.hp > 0 && area.has(`${z.x},${z.y}`),
+        )) {
+          z.hp = Math.max(0, z.hp - 36);
+          z.stunUntil = now + 1500;
+          if (!z.hp) p.parts += 2;
+        }
+      } else
+        for (const q of s.players.filter(
+          (q) => q.hp > 0 && distance(p, q) <= 2,
+        ))
+          q.shieldUntil = Math.max(q.shieldUntil, now + 3000);
     }
     p.skillAt[i] = now + (c.slot === 1 ? 6000 : 10000);
     return;
@@ -515,12 +598,20 @@ export function tick(s: GameState, now: number) {
       }
     }
     if (p.input.attack && now >= p.attackAt) {
-      p.attackAt = now + (p.weaponAcquired ? JOBS[p.job].attackMs : 520);
+      p.attackAt =
+        now +
+        (p.weaponAcquired
+          ? Math.round(JOBS[p.job].attackMs * (p.focusUntil > now ? 0.5 : 1))
+          : 520);
       if (p.weaponAcquired) attack(s, p, now);
       else attack(s, p, now, 3, 14);
     }
   }
   for (const z of s.zombies.filter((z) => z.hp > 0)) {
+    if (z.stunUntil > now) {
+      z.state = 'stunned';
+      continue;
+    }
     const target = s.players
       .filter((p) => p.hp > 0 && p.connected)
       .sort((a, b) => distance(a, z) - distance(b, z))[0];

@@ -25,8 +25,36 @@ export const JOBS = {
     attackMs: 520,
     skills: ['광역 회복', '응급 구조'],
   },
+  ranger: {
+    name: '수색대',
+    character: '강시우',
+    identity: '양궁부 선수',
+    weapon: '연습용 활',
+    bio: '낯선 발소리를 먼저 알아채는 양궁부 선수. 멀리서 길을 열고 동료가 이동할 시간을 번다.',
+    hp: 90,
+    damage: 32,
+    range: 5,
+    attackMs: 760,
+    skills: ['집중 사격', '신속 장전'],
+  },
+  engineer: {
+    name: '공작대',
+    character: '윤태오',
+    identity: '과학 동아리',
+    weapon: '휴대식 전기봉',
+    bio: '고장 난 장비를 고치는 과학 동아리 학생. 전류로 추격을 끊고 동료에게 응급 방벽을 펼친다.',
+    hp: 110,
+    damage: 22,
+    range: 1,
+    attackMs: 540,
+    skills: ['전류 방출', '응급 방벽'],
+  },
 } as const;
 export type Job = keyof typeof JOBS;
+export const JOB_IDS = Object.keys(JOBS) as Job[];
+export const MAX_PLAYERS = 4;
+export const isJob = (value: unknown): value is Job =>
+  typeof value === 'string' && Object.hasOwn(JOBS, value);
 export interface Pos {
   x: number;
   y: number;

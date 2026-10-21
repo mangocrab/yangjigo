@@ -1323,3 +1323,17 @@ canvas {
     grid-template-columns: 1fr;
   }
 }
+
+.hero-card:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  border-style: dashed;
+}
+.hero-card em {
+  font-size: 12px;
+  font-style: normal;
+  color: #94c4b2;
+}
+.hero-card:disabled em {
+  color: #dd9b83;
+}

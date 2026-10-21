@@ -1,4 +1,4 @@
-import type { Job, ZombieKind } from './content';
+import { isJob, type Job, type ZombieKind } from './content';
 import { isDifficulty, type Difficulty, type SkinId } from './rules';
 export type Direction = 'up' | 'down' | 'left' | 'right';
 export const DIR: Record<Direction, { x: number; y: number }> = {
@@ -44,9 +44,7 @@ export function parseCommand(raw: unknown): Command | null {
         ? { v: 1, type: 'skill', slot: m.slot }
         : null;
     case 'job':
-      return m.job === 'medic' || m.job === 'vanguard'
-        ? { v: 1, type: 'job', job: m.job }
-        : null;
+      return isJob(m.job) ? { v: 1, type: 'job', job: m.job } : null;
     case 'ready':
       return typeof m.ready === 'boolean'
         ? { v: 1, type: 'ready', ready: m.ready }
@@ -94,6 +92,8 @@ export interface Player {
   attackAt: number;
   skillAt: [number, number];
   shieldUntil: number;
+  focusUntil: number;
+  attackEffect: 'weapon' | 'pulse';
   hitAt: number;
   attackUntil: number;
   parts: number;
@@ -112,6 +112,7 @@ export interface Zombie {
   moveAt: number;
   attackAt: number;
   state: string;
+  stunUntil: number;
 }
 export interface GameState {
   roomId: string;

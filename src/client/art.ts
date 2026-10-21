@@ -18,7 +18,14 @@ export function heroCanvas(
     g.fillRect(x, y, w, h);
   };
   const coat = '#' + SKINS[skin].color.toString(16).padStart(6, '0'),
-    hair = job === 'medic' ? '#503850' : '#263249',
+    hair = (
+      {
+        vanguard: '#263249',
+        medic: '#503850',
+        ranger: '#6b5341',
+        engineer: '#263e43',
+      } as const
+    )[job],
     bob = frame ? 1 : 0,
     back = dir === 'up',
     side = dir === 'left' || dir === 'right';
@@ -65,12 +72,30 @@ export function heroCanvas(
     r('#a5494c', 8, 6 + bob, 17, 2);
     r('#e4b570', 9, 6 + bob, 4, 1);
     r('#d7ad74', 19, 15 + bob, 4, 3);
-  } else {
+  } else if (job === 'medic') {
     r(hair, 6, 5 + bob, 3, 12);
     r('#e4b9c9', 6, 9 + bob, 3, 2);
     r('#f1e4c7', 8, 18 + bob, 8, 6);
     r('#ba6265', 11, 18 + bob, 2, 6);
     r('#ba6265', 9, 20 + bob, 6, 2);
+  }
+  if (job === 'ranger') {
+    r('#3d685b', 8, 4 + bob, 17, 4);
+    r('#98bd88', 9, 4 + bob, 14, 1);
+    r('#b7986b', 8, 16 + bob, 3, 11);
+    r('#4d3e36', 8, 17 + bob, 5, 9);
+    r('#e1d3a4', 7, 12 + bob, 1, 9);
+    r('#e1d3a4', 10, 11 + bob, 1, 9);
+    r('#668260', 18, 15 + bob, 5, 7);
+  } else if (job === 'engineer') {
+    r('#172d39', 8, 6 + bob, 18, 4);
+    r('#d2a15e', 9, 6 + bob, 16, 3);
+    r('#87bdc1', 10, 6 + bob, 5, 2);
+    r('#87bdc1', 19, 6 + bob, 5, 2);
+    r('#c48a4e', 8, 15 + bob, 5, 9);
+    r('#c48a4e', 20, 15 + bob, 4, 9);
+    r('#4c5350', 8, 22 + bob, 17, 3);
+    r('#dfc281', 16, 22 + bob, 3, 2);
   }
   if (skin === 'survivor') {
     r('#735141', 9, 16 + bob, 3, 8);
@@ -95,11 +120,24 @@ export function heroCanvas(
     r('#a4c3cd', 27, 6 + bob, 3, 13);
     r('#e4ecdd', 27, 6 + bob, 1, 11);
     r('#805447', 28, 19 + bob, 2, 6);
-  } else {
+  } else if (job === 'medic') {
     r('#162237', 24, 16 + bob, 8, 5);
     r('#d59b57', 25, 16 + bob, 7, 3);
     r('#f6cf8c', 29, 16 + bob, 3, 1);
     r('#68474b', 25, 20 + bob, 3, 3);
+  }
+  if (armed && job === 'ranger') {
+    r('#4a3731', 26, 8 + bob, 2, 20);
+    r('#c4a36b', 28, 10 + bob, 2, 16);
+    r('#dbc68c', 30, 13 + bob, 1, 10);
+    r('#eee3b3', 25, 10 + bob, 1, 17);
+    r('#6f8979', 24, 17 + bob, 8, 1);
+  } else if (armed && job === 'engineer') {
+    r('#162536', 27, 8 + bob, 4, 18);
+    r('#517987', 28, 10 + bob, 2, 15);
+    r('#c0e5df', 27, 6 + bob, 4, 6);
+    r('#63afba', 28, 5 + bob, 2, 7);
+    r('#c9e8db', 26, 7 + bob, 6, 1);
   }
   return c;
 }
@@ -224,7 +262,9 @@ export function drawStoryBackdrop(
       r('#a55052', 246, 60, 4, 27);
     }
   }
-  g.drawImage(heroCanvas('uniform', 'vanguard', armed), 96, 76);
-  g.drawImage(heroCanvas('uniform', 'medic', armed), 141, 76);
+  g.drawImage(heroCanvas('uniform', 'vanguard', armed), 74, 76);
+  g.drawImage(heroCanvas('uniform', 'medic', armed), 114, 76);
+  g.drawImage(heroCanvas('uniform', 'ranger', armed), 154, 76);
+  g.drawImage(heroCanvas('uniform', 'engineer', armed), 194, 76);
   if (setting === 'hall') g.drawImage(zombieCanvas('caretaker'), 242, 72);
 }

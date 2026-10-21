@@ -280,6 +280,7 @@ export class SchoolScene extends Phaser.Scene {
             texture: `zombie-${z.kind}-${z.state === 'chase' ? Math.floor(time / 180) % 2 : 0}`,
             name: ZOMBIE_TYPES[z.kind].name,
             weaponAcquired: true,
+            attackEffect: 'weapon' as const,
             job: 'vanguard' as Job,
             dir: 'down',
             connected: true,
@@ -334,18 +335,39 @@ export class SchoolScene extends Phaser.Scene {
             5,
             4,
           );
-        } else if (p.job === 'medic') {
+        } else if (p.job === 'engineer') {
+          const radius = p.attackEffect === 'pulse' ? 60 : 25;
+          this.marks.lineStyle(2, 0x99e5df, 0.85);
+          this.marks.strokeRect(
+            sprite.x - radius,
+            sprite.y - radius,
+            radius * 2,
+            radius * 2,
+          );
+          this.marks.lineBetween(
+            sprite.x - radius,
+            sprite.y,
+            sprite.x + radius,
+            sprite.y,
+          );
+          this.marks.lineBetween(
+            sprite.x,
+            sprite.y - radius,
+            sprite.x,
+            sprite.y + radius,
+          );
+        } else if (p.job === 'medic' || p.job === 'ranger') {
           this.marks.lineStyle(2, 0xf0b56c, 0.8);
           this.marks.lineBetween(
             sprite.x + d[0] * 15,
             sprite.y + d[1] * 15,
-            sprite.x + d[0] * 60,
-            sprite.y + d[1] * 60,
+            sprite.x + d[0] * (p.job === 'ranger' ? 150 : 60),
+            sprite.y + d[1] * (p.job === 'ranger' ? 150 : 60),
           );
           this.marks.fillStyle(0xffe6a0);
           this.marks.fillRect(
-            sprite.x + d[0] * 60 - 3,
-            sprite.y + d[1] * 60 - 3,
+            sprite.x + d[0] * (p.job === 'ranger' ? 150 : 60) - 3,
+            sprite.y + d[1] * (p.job === 'ranger' ? 150 : 60) - 3,
             6,
             6,
           );

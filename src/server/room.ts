@@ -9,12 +9,14 @@ import {
   command,
   tick,
   setActiveClock,
+  vacantJob,
 } from './simulation';
 import {
   parseCommand,
   type GameState,
   type RoomSummary,
 } from '../shared/protocol';
+import { MAX_PLAYERS } from '../shared/content';
 import { isSkin } from '../shared/rules';
 interface Saved {
   state: GameState;
@@ -166,13 +168,16 @@ export class GameRoom extends DurableObject<Env> {
             throw new HttpError(403, '초대 코드가 올바르지 않습니다.');
           if (this.state.phase !== 'waiting')
             throw new HttpError(409, '진행 중인 방에 새로 참가할 수 없습니다.');
-          if (this.state.players.length >= 4)
+          if (this.state.players.length >= MAX_PLAYERS)
             throw new HttpError(409, '방이 가득 찼습니다.');
+          const job = vacantJob(this.state);
+          if (!job) throw new HttpError(409, '선택할 수 있는 직업이 없습니다.');
           p = newPlayer(
             id,
             d.name,
             Date.now(),
             isSkin(d.skin) ? d.skin : 'uniform',
+            job,
           );
           this.state.players.push(p);
         }

@@ -123,7 +123,7 @@ async function drive(pages: Page[], timeout = 130000) {
         if (
           p.weaponAcquired &&
           s.now >= p.skillAt[1] &&
-          (p.job === 'vanguard' ? !!enemy : !!down)
+          (p.job === 'medic' ? !!down : !!enemy)
         )
           await send(pages[i], { v: 1, type: 'skill', slot: 2 });
         if (!enemy && distance(p, target) <= 1 && o.kind !== 'survive')
@@ -205,8 +205,9 @@ test('4인 노말 완주 → 에피소드별 티켓 → 전원 하드 입장·�
     await expect
       .poll(async () => (await snap(pages[0])).difficulty)
       .toBe('normal');
-    for (let i = 1; i < 4; i++)
-      if (i % 2) await send(pages[i], { v: 1, type: 'job', job: 'medic' });
+    expect(new Set((await snap(pages[0])).players.map((p) => p.job)).size).toBe(
+      4,
+    );
     for (const p of pages) await ready(p);
     await send(pages[0], { v: 1, type: 'start' });
     await expect.poll(async () => (await snap(pages[0])).phase).toBe('playing');
@@ -277,8 +278,9 @@ test('4인 노말 완주 → 에피소드별 티켓 → 전원 하드 입장·�
     await expect
       .poll(async () => (await snap(pages[0])).difficulty)
       .toBe('hard');
-    for (let i = 1; i < 4; i++)
-      if (i % 2) await send(pages[i], { v: 1, type: 'job', job: 'medic' });
+    expect(new Set((await snap(pages[0])).players.map((p) => p.job)).size).toBe(
+      4,
+    );
     for (const p of pages) await ready(p);
     await send(pages[0], { v: 1, type: 'start' });
     await expect.poll(async () => (await snap(pages[0])).phase).toBe('playing');
@@ -628,5 +630,93 @@ test('도트 주연 선택·돌 던지기·무기 획득·구간 컷신·퍼즐�
     expect(account.episodes[0].tickets).toBe(0);
   } finally {
     await c.close();
+  }
+});
+
+test('직업 독점: 4종 카드·동시 선택·연결 종료 예약·퇴장 해제', async ({
+  browser,
+}) => {
+  const contexts: BrowserContext[] = [],
+    pages: Page[] = [];
+  try {
+    for (let i = 0; i < 3; i++) {
+      const c = await browser.newContext();
+      contexts.push(c);
+      await observe(c);
+      const p = await c.newPage();
+      pages.push(p);
+      await register(p, '직업 대원' + i);
+      (p as any).uid = (await api(p, 'me')).body.profile.id;
+    }
+    const [a, b, c] = pages,
+      id = await create(a, '직업 독점 검증');
+    for (const p of [b, c]) {
+      await p.getByRole('button', { name: '↻ 새로고침' }).click();
+      await p.getByRole('button', { name: /직업 독점 검증/ }).click();
+    }
+    await expect.poll(async () => (await snap(a)).players.length).toBe(3);
+    expect(new Set((await snap(a)).players.map((p) => p.job)).size).toBe(3);
+    await expect(a.locator('[data-job-choice]')).toHaveCount(4);
+    await expect(a.locator('[data-job-choice="medic"]')).toBeDisabled();
+    await expect(b.locator('[data-job-choice="vanguard"]')).toBeDisabled();
+    await send(a, { v: 1, type: 'job', job: 'medic' });
+    await expect(a.locator('#toast')).toContainText('이미');
+    expect((await snap(a)).players[0].job).toBe('vanguard');
+    await ready(a);
+    await a.locator('[data-job-choice="engineer"]').click();
+    await expect
+      .poll(async () => (await snap(a)).players[0].job)
+      .toBe('engineer');
+    expect((await snap(a)).players[0].ready).toBe(false);
+    await Promise.all([
+      send(b, { v: 1, type: 'job', job: 'vanguard' }),
+      send(c, { v: 1, type: 'job', job: 'vanguard' }),
+    ]);
+    await expect
+      .poll(
+        async () =>
+          (await snap(a)).players.filter((p) => p.job === 'vanguard').length,
+      )
+      .toBe(1);
+    const party = (await snap(a)).players,
+      winner = party.find((p) => p.job === 'vanguard')!,
+      winnerPage = pages.find((p) => (p as any).uid === winner.id)!,
+      loser = winnerPage === b ? c : b;
+    await expect(loser.locator('#toast')).toContainText('이미');
+    expect(new Set((await snap(a)).players.map((p) => p.job)).size).toBe(3);
+    await winnerPage.evaluate(() => {
+      (window as any).__ws.onclose = null;
+      (window as any).__ws.close();
+    });
+    await expect
+      .poll(
+        async () =>
+          (await snap(a)).players.find((p) => p.id === winner.id)?.connected,
+      )
+      .toBe(false);
+    await expect(a.locator('[data-job-choice="vanguard"]')).toBeDisabled();
+    await winnerPage.goto('/');
+    await expect
+      .poll(
+        async () =>
+          (await snap(winnerPage))?.players.find((p) => p.id === winner.id)
+            ?.connected,
+      )
+      .toBe(true);
+    expect(
+      (await snap(winnerPage)).players.find((p) => p.id === winner.id)!.job,
+    ).toBe('vanguard');
+    await winnerPage.getByRole('button', { name: '방 나가기' }).click();
+    await expect.poll(async () => (await snap(a)).players.length).toBe(2);
+    await expect(a.locator('[data-job-choice="vanguard"]')).toBeEnabled();
+    await a.locator('[data-job-choice="vanguard"]').click();
+    await expect
+      .poll(async () => (await snap(a)).players[0].job)
+      .toBe('vanguard');
+    await a
+      .locator('.hero-grid')
+      .screenshot({ path: 'test-results/four-jobs.png' });
+  } finally {
+    await Promise.all(contexts.map((c) => c.close()));
   }
 });
