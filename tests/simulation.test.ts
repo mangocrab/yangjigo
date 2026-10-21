@@ -235,19 +235,21 @@ describe('에피소드 0 진행과 체크포인트', () => {
     enter(s, 2, 1000);
     Object.assign(s.players[0], { x: 4, y: 3 });
     command(s, 'a', { v: 1, type: 'interact' }, 1100);
+    tick(s, 2600);
     Object.assign(s.players[0], { x: 17, y: 4 });
-    command(s, 'a', { v: 1, type: 'interact' }, 1200);
+    command(s, 'a', { v: 1, type: 'interact' }, 2700);
+    tick(s, 4200);
     expect(s.zombies).toHaveLength(6);
     s.zombies = [];
-    setActiveClock(s, 2000, false);
-    setActiveClock(s, 20000, true);
-    expect(s.defendUntil).toBe(31200);
-    tick(s, 31199);
+    setActiveClock(s, 5000, false);
+    setActiveClock(s, 23000, true);
+    expect(s.defendUntil).toBe(34200);
+    tick(s, 34199);
     expect(s.mission).toBe(2);
-    tick(s, 31200);
+    tick(s, 34200);
     expect(s.mission).toBe(3);
     s.players.forEach((p) => Object.assign(p, { x: 19, y: 13 }));
-    command(s, 'a', { v: 1, type: 'interact' }, 32000);
+    command(s, 'a', { v: 1, type: 'interact' }, 35000);
     expect(s.cutscene?.key).toBe('ending');
     acknowledge(s);
     expect(s.phase).toBe('clear');
@@ -265,9 +267,12 @@ describe('난이도·전투·구조·강화', () => {
       s.players[1].connected = false;
       s.zombies = [{ ...s.zombies[0], x: 3, y: 5, attackAt: 0 }];
       tick(s, 1000);
+      expect(p.hp).toBe(140);
+      expect(s.zombies[0].windup?.until).toBe(1650);
+      tick(s, 1650);
       expect(p.hp).toBe(140 - r.damage);
-      expect(s.zombies[0].attackAt).toBe(1000 + r.attackMs);
-      tick(s, 1100);
+      expect(s.zombies[0].attackAt).toBe(1650 + r.attackMs);
+      tick(s, 1700);
       expect(p.hp).toBe(140 - r.damage);
     },
   );
@@ -435,8 +440,10 @@ describe('주연의 무기 획득과 동기화 컷신', () => {
     Object.assign(runner, { x: 4, y: 5 });
     s.zombies = [runner];
     tick(s, 3000);
+    expect(runner.windup?.until).toBe(3450);
+    tick(s, 3450);
     expect(s.players[0].hp).toBe(140 - Math.round(12 * 0.8));
-    expect(runner.attackAt).toBe(3000 + Math.round(900 * 0.7));
+    expect(runner.attackAt).toBe(3450 + Math.round(900 * 0.7));
   });
 });
 
@@ -590,4 +597,142 @@ describe('4인 직업 독점과 신규 역할', () => {
     expect(s.zombies[0].hp).toBe(78);
     expect(s.zombies[0].stunUntil).toBe(0);
   });
+});
+
+describe('디비전 자료에서 적용한 상호작용·구조·카운터', () => {
+  it('전원 장치는 1.5초 대기 후 작동하며 동시 완료는 한 번만 진행', () => {
+    const s = setup();
+    enter(s, 2, 1000);
+    s.zombies = [];
+    s.players.forEach((p) => Object.assign(p, { x: 4, y: 3 }));
+    for (const p of s.players)
+      command(s, p.id, { v: 1, type: 'interact' }, 1000);
+    tick(s, 2499);
+    expect(s.mission).toBe(0);
+    tick(s, 2500);
+    expect(s.mission).toBe(1);
+    expect(s.players.every((p) => !p.interaction)).toBe(true);
+  });
+  it.each(['move', 'attack', 'hurt', 'disconnect'] as const)(
+    '%s 로 상호작용 취소',
+    (kind) => {
+      const s = setup();
+      enter(s, 2, 1000);
+      s.zombies = [];
+      const p = s.players[0];
+      Object.assign(p, { x: 4, y: 3 });
+      command(s, 'a', { v: 1, type: 'interact' }, 1000);
+      if (kind === 'move')
+        command(
+          s,
+          'a',
+          { v: 1, type: 'input', direction: 'right', attack: false },
+          1100,
+        );
+      if (kind === 'attack')
+        command(
+          s,
+          'a',
+          { v: 1, type: 'input', direction: null, attack: true },
+          1100,
+        );
+      if (kind === 'hurt') {
+        s.zombies = [
+          {
+            id: 'hit',
+            kind: 'student',
+            x: 5,
+            y: 3,
+            hp: 78,
+            maxHp: 78,
+            spawnX: 5,
+            spawnY: 3,
+            moveAt: 9999,
+            attackAt: 0,
+            state: 'windup',
+            stunUntil: 0,
+            counterUntil: 0,
+            windup: { dx: -1, dy: 0, until: 1200 },
+          },
+        ];
+      }
+      if (kind === 'disconnect') p.connected = false;
+      tick(s, 1200);
+      tick(s, 2600);
+      expect(s.mission).toBe(0);
+      expect(p.interaction).toBeNull();
+    },
+  );
+  it('동료 구조는 4초 필요하고 거리 이탈과 재구조를 검증', () => {
+    const s = setup();
+    s.zombies = [];
+    s.players[1].hp = 0;
+    command(s, 'a', { v: 1, type: 'interact' }, 1000);
+    tick(s, 4999);
+    expect(s.players[1].hp).toBe(0);
+    tick(s, 5000);
+    expect(s.players[1].hp).toBe(25);
+    expect(s.players[0].interaction).toBeNull();
+  });
+  it('예고 타일에서 벗어나면 적 공격 회피', () => {
+    const s = setup();
+    s.players[1].connected = false;
+    const p = s.players[0],
+      z = { ...s.zombies[0], x: 3, y: 5, attackAt: 0 };
+    s.zombies = [z];
+    tick(s, 1000);
+    expect(z.windup?.until).toBe(1650);
+    expect(p.hp).toBe(140);
+    Object.assign(p, { x: 2, y: 4 });
+    tick(s, 1650);
+    expect(p.hp).toBe(140);
+    expect(z.windup).toBeNull();
+  });
+  it('정면 예고 중 반격하면 2초 기절·피해 2배, 재사용 제한 적용', () => {
+    const s = setup();
+    s.players[1].connected = false;
+    const p = s.players[0];
+    p.weaponAcquired = true;
+    s.zombies = [{ ...s.zombies[0], x: 3, y: 5, attackAt: 0 }];
+    tick(s, 1000);
+    expect(command(s, 'a', { v: 1, type: 'counter' }, 1100)).toBeUndefined();
+    expect(s.zombies[0].counterUntil).toBe(3100);
+    expect(command(s, 'a', { v: 1, type: 'counter' }, 1200)).toContain('대기');
+    command(
+      s,
+      'a',
+      { v: 1, type: 'input', direction: null, attack: true },
+      1200,
+    );
+    tick(s, 1200);
+    expect(s.zombies[0].hp).toBe(26);
+    expect(p.hp).toBe(140);
+  });
+  it('무기 전·정면이 아닌 위치·예고 없는 반격은 거부', () => {
+    const s = setup();
+    const p = s.players[0];
+    expect(command(s, 'a', { v: 1, type: 'counter' }, 1000)).toContain('무기');
+    p.weaponAcquired = true;
+    expect(command(s, 'a', { v: 1, type: 'counter' }, 1000)).toContain('정면');
+    s.zombies = [
+      { ...s.zombies[0], x: 3, y: 5, windup: { dx: -1, dy: 0, until: 2000 } },
+    ];
+    p.dir = 'left';
+    expect(command(s, 'a', { v: 1, type: 'counter' }, 1100)).toContain('정면');
+    expect(p.counterAt).toBe(0);
+  });
+});
+
+it('전원 오프라인 시간 동안 공격 예고의 남은 시간을 보존', () => {
+  const s = setup();
+  s.players[1].connected = false;
+  s.zombies = [{ ...s.zombies[0], x: 3, y: 5, attackAt: 0 }];
+  tick(s, 1000);
+  setActiveClock(s, 1200, false);
+  setActiveClock(s, 11200, true);
+  expect(s.zombies[0].windup?.until).toBe(11650);
+  tick(s, 11200);
+  expect(s.players[0].hp).toBe(140);
+  tick(s, 11650);
+  expect(s.players[0].hp).toBe(128);
 });

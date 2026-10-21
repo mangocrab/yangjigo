@@ -1,5 +1,6 @@
 import {
   JOBS,
+  attackTiles,
   JOB_IDS,
   type Job,
   ZOMBIE_TYPES,
@@ -17,6 +18,7 @@ import {
   type GameState,
   type Player,
   type Command,
+  type Zombie,
 } from '../shared/protocol';
 export const distance = (a: Pos, b: Pos) =>
   Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
@@ -80,6 +82,8 @@ export function newPlayer(
     skillAt: [0, 0],
     shieldUntil: 0,
     focusUntil: 0,
+    counterAt: 0,
+    interaction: null,
     attackEffect: 'weapon',
     hitAt: 0,
     attackUntil: 0,
@@ -139,6 +143,8 @@ export function normalizeState(s: GameState) {
     p.skin ??= 'uniform';
     p.hardTickets ??= 0;
     p.focusUntil ??= 0;
+    p.counterAt ??= 0;
+    p.interaction ??= null;
     p.attackEffect ??= 'weapon';
     p.weaponAcquired ??= s.contentVersion < 4;
     p.rockHits ??= s.contentVersion < 4 ? 3 : 0;
@@ -155,6 +161,8 @@ export function normalizeState(s: GameState) {
     z.maxHp ??= 78;
     z.kind ??= 'student';
     z.stunUntil ??= 0;
+    z.counterUntil ??= 0;
+    z.windup ??= null;
   }
   if (s.phase === 'waiting') {
     const occupied = new Set<Job>();
@@ -182,11 +190,40 @@ export function normalizeState(s: GameState) {
 export function vacantJob(s: Pick<GameState, 'players'>): Job | undefined {
   return JOB_IDS.find((job) => !s.players.some((p) => p.job === job));
 }
+function shiftTimers(s: GameState, delta: number, from: number) {
+  for (const p of s.players) {
+    for (const key of [
+      'moveAt',
+      'attackAt',
+      'hitAt',
+      'shieldUntil',
+      'focusUntil',
+      'counterAt',
+    ] as const)
+      if (p[key] > from) p[key] += delta;
+    p.skillAt = p.skillAt.map((t) => (t > from ? t + delta : t)) as [
+      number,
+      number,
+    ];
+  }
+  for (const z of s.zombies) {
+    for (const key of [
+      'moveAt',
+      'attackAt',
+      'stunUntil',
+      'counterUntil',
+    ] as const)
+      if (z[key] > from) z[key] += delta;
+    if (z.windup) z.windup.until += delta;
+  }
+}
 export function setActiveClock(s: GameState, now: number, active: boolean) {
   if (s.phase !== 'playing') return;
   if (!active && !s.pausedAt) s.pausedAt = now;
   if (active && s.pausedAt) {
-    if (s.defendUntil) s.defendUntil += Math.max(0, now - s.pausedAt);
+    const elapsed = Math.max(0, now - s.pausedAt);
+    if (s.defendUntil) s.defendUntil += elapsed;
+    shiftTimers(s, elapsed, s.pausedAt);
     s.pausedAt = 0;
   }
 }
@@ -211,6 +248,8 @@ function spawnZombies(
     attackAt: 0,
     state: 'idle',
     stunUntil: 0,
+    counterUntil: 0,
+    windup: null,
   }));
 }
 export function loadStage(
@@ -244,6 +283,8 @@ export function loadStage(
       hitAt: 0,
       shieldUntil: 0,
       focusUntil: 0,
+      counterAt: 0,
+      interaction: null,
       attackEffect: 'weapon',
       skillAt: [0, 0],
       input: { direction: null, attack: false, at: now },
@@ -273,9 +314,11 @@ function beginScene(
   key: NonNullable<GameState['cutscene']>['key'],
 ) {
   s.cutscene = { id: crypto.randomUUID(), key, acknowledged: [] };
-  s.players.forEach(
-    (p) => (p.input = { direction: null, attack: false, at: s.now }),
-  );
+  s.zombies.forEach((z) => (z.windup = null));
+  s.players.forEach((p) => {
+    p.input = { direction: null, attack: false, at: s.now };
+    p.interaction = null;
+  });
 }
 function finishScene(s: GameState, now: number) {
   const scene = s.cutscene;
@@ -290,7 +333,9 @@ function finishScene(s: GameState, now: number) {
     s.phase = 'clear';
     return;
   }
-  if (s.defendUntil) s.defendUntil += Math.max(0, now - s.now);
+  const elapsed = Math.max(0, now - s.now);
+  if (s.defendUntil) s.defendUntil += elapsed;
+  shiftTimers(s, elapsed, s.now);
   s.players.forEach((p) => {
     p.input = { direction: null, attack: false, at: now };
     p.moveAt = now;
@@ -349,7 +394,7 @@ function attack(
     )) {
       hit.add(z.id);
       if (!p.weaponAcquired) p.rockHits++;
-      z.hp = Math.max(0, z.hp - damage);
+      z.hp = Math.max(0, z.hp - damage * (z.counterUntil > now ? 2 : 1));
       const nx = z.x + dir.x,
         ny = z.y + dir.y;
       if (
@@ -358,6 +403,7 @@ function attack(
         !s.players.some((q) => q.hp > 0 && q.x === nx && q.y === ny) &&
         !s.zombies.some((q) => q !== z && q.hp > 0 && q.x === nx && q.y === ny)
       ) {
+        z.windup = null;
         z.x = nx;
         z.y = ny;
       }
@@ -387,6 +433,7 @@ export function command(
   }
   if (c.type === 'input') {
     if (s.cutscene) return;
+    if (c.direction || c.attack) p.interaction = null;
     p.input = { direction: c.direction, attack: c.attack, at: now };
     return;
   }
@@ -446,9 +493,36 @@ export function command(
   }
   if (s.phase !== 'playing' || p.hp <= 0) return '현재 행동할 수 없습니다.';
   if (s.cutscene) return '이야기를 확인한 뒤 진행하세요.';
+  if (c.type === 'counter') {
+    if (!p.weaponAcquired) return '무기를 획득해야 반격할 수 있습니다.';
+    if (now < p.counterAt) return '반격 재사용 대기 중입니다.';
+    const d = DIR[p.dir];
+    const z = s.zombies.find(
+      (z) =>
+        z.hp > 0 &&
+        z.windup &&
+        z.windup.until > now &&
+        distance(p, z) <= 2 &&
+        (z.x - p.x) * d.x + (z.y - p.y) * d.y === distance(p, z) &&
+        (p.x - z.x) * z.windup.dx + (p.y - z.y) * z.windup.dy > 0 &&
+        Array.from({ length: distance(p, z) }, (_, i) =>
+          tileOpen(s, p.x + d.x * (i + 1), p.y + d.y * (i + 1)),
+        ).every(Boolean),
+    );
+    if (!z) return '공격 예고 중인 적을 정면에서 마주보고 반격하세요.';
+    z.windup = null;
+    z.stunUntil = now + 2000;
+    z.counterUntil = now + 2000;
+    z.attackAt = now + 2000;
+    p.counterAt = now + 4000;
+    p.interaction = null;
+    s.notice = `${p.name} 반격 성공! 2초간 적 피해 2배`;
+    return;
+  }
   if (c.type === 'skill') {
     if (!p.weaponAcquired)
       return '비상 장비함에서 무기를 얻어야 스킬을 사용할 수 있습니다.';
+    p.interaction = null;
     const i = c.slot - 1;
     if (now < p.skillAt[i]) return '스킬 재사용 대기 중입니다.';
     if (p.job === 'vanguard') {
@@ -490,7 +564,8 @@ export function command(
         for (const z of s.zombies.filter(
           (z) => z.hp > 0 && area.has(`${z.x},${z.y}`),
         )) {
-          z.hp = Math.max(0, z.hp - 36);
+          z.hp = Math.max(0, z.hp - 36 * (z.counterUntil > now ? 2 : 1));
+          z.windup = null;
           z.stunUntil = now + 1500;
           if (!z.hp) p.parts += 2;
         }
@@ -530,7 +605,7 @@ export function command(
       (q) => q.id !== id && !q.hp && distance(p, q) <= 1,
     );
     if (down) {
-      down.hp = 35;
+      beginInteraction(p, 'revive:' + down.id, now, 4000);
       return;
     }
     const near = stage.objects.filter((o) => distance(p, o) <= 1),
@@ -568,9 +643,71 @@ export function command(
       } else loadStage(s, s.stageIndex + 1, now);
       return;
     }
+    if (objective.kind === 'activate') {
+      beginInteraction(p, target.id, now, 1500);
+      return;
+    }
     if (objective.kind === 'collect') p.parts += 3;
     advance(s, now);
     if (target.kind === 'npc') s.notice = target.text!;
+  }
+}
+function beginInteraction(
+  p: Player,
+  target: string,
+  now: number,
+  durationMs: number,
+) {
+  if (p.interaction?.target === target) return;
+  p.interaction = {
+    target,
+    startedAt: now,
+    durationMs,
+    x: p.x,
+    y: p.y,
+    hitAt: p.hitAt,
+  };
+}
+function updateInteractions(s: GameState, now: number) {
+  for (const p of s.players) {
+    const a = p.interaction;
+    if (!a) continue;
+    if (
+      !p.hp ||
+      !p.connected ||
+      p.x !== a.x ||
+      p.y !== a.y ||
+      p.input.direction ||
+      p.input.attack ||
+      p.hitAt !== a.hitAt
+    ) {
+      p.interaction = null;
+      continue;
+    }
+    const down = a.target.startsWith('revive:')
+      ? s.players.find(
+          (q) => q.id === a.target.slice(7) && !q.hp && distance(p, q) <= 1,
+        )
+      : null;
+    const target = stageFor(s).objects.find(
+      (o) => o.id === a.target && distance(p, o) <= 1,
+    );
+    if (
+      a.target.startsWith('revive:')
+        ? !down
+        : !target ||
+          objectiveFor(s)?.kind !== 'activate' ||
+          objectiveFor(s)?.target !== a.target
+    ) {
+      p.interaction = null;
+      continue;
+    }
+    if (now - a.startedAt < a.durationMs) continue;
+    p.interaction = null;
+    if (down) {
+      down.hp = Math.ceil(JOBS[down.job].hp * 0.25);
+      s.notice = `${p.name}: ${down.name} 구조 완료`;
+    } else advance(s, now);
   }
 }
 export function tick(s: GameState, now: number) {
@@ -609,6 +746,7 @@ export function tick(s: GameState, now: number) {
   }
   for (const z of s.zombies.filter((z) => z.hp > 0)) {
     if (z.stunUntil > now) {
+      z.windup = null;
       z.state = 'stunned';
       continue;
     }
@@ -619,16 +757,46 @@ export function tick(s: GameState, now: number) {
     const dist = distance(z, target),
       archetype = ZOMBIE_TYPES[z.kind];
     const damage = Math.round(rules.damage * archetype.damage);
-    if (dist <= 1) {
-      z.state = 'attack';
-      if (now >= z.attackAt && now >= target.hitAt) {
-        target.hp = Math.max(
-          0,
-          target.hp -
-            (now < target.shieldUntil ? Math.ceil(damage / 3) : damage),
-        );
-        target.hitAt = now + 650;
+    if (z.windup) {
+      z.state = 'windup';
+      if (now >= z.windup.until) {
+        const tiles = attackTiles(s, z);
+        for (const victim of s.players.filter(
+          (q) =>
+            q.connected &&
+            q.hp > 0 &&
+            now >= q.hitAt &&
+            tiles.some((t) => t.x === q.x && t.y === q.y),
+        )) {
+          victim.hp = Math.max(
+            0,
+            victim.hp -
+              (now < victim.shieldUntil ? Math.ceil(damage / 3) : damage),
+          );
+          victim.hitAt = now + 650;
+          victim.interaction = null;
+        }
+        z.windup = null;
         z.attackAt = now + Math.round(rules.attackMs * archetype.speed);
+      }
+      continue;
+    }
+    if (dist <= (z.kind === 'caretaker' ? 2 : 1)) {
+      z.state = 'attack';
+      if (now >= z.attackAt) {
+        const dx = target.x - z.x,
+          dy = target.y - z.y;
+        const dir =
+          Math.abs(dx) > Math.abs(dy)
+            ? { dx: Math.sign(dx), dy: 0 }
+            : { dx: 0, dy: Math.sign(dy) };
+        z.windup = {
+          ...dir,
+          until:
+            now +
+            (z.kind === 'runner' ? 450 : z.kind === 'caretaker' ? 950 : 650),
+        };
+        z.state = 'windup';
       }
     } else if (now >= z.moveAt) {
       z.moveAt = now + Math.round(rules.moveMs * archetype.speed);
@@ -649,6 +817,7 @@ export function tick(s: GameState, now: number) {
       }
     }
   }
+  updateInteractions(s, now);
   if (s.players.length && s.players.every((p) => !p.hp)) {
     s.phase = 'over';
     s.notice = '모든 동료가 쓰러졌습니다. 체크포인트에서 다시 도전하세요.';

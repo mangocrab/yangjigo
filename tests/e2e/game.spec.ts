@@ -96,6 +96,15 @@ async function drive(pages: Page[], timeout = 130000) {
     for (let i = 0; i < pages.length; i++) {
       const p = s.players[i];
       if (!p) throw new Error('참가자 누락');
+      if (p.interaction) {
+        await send(pages[i], {
+          v: 1,
+          type: 'input',
+          direction: null,
+          attack: false,
+        });
+        continue;
+      }
       const enemy = s.zombies
           .filter((z) => z.hp > 0 && distance(p, z) <= 4)
           .sort((a, b) => distance(a, p) - distance(b, p))[0],
@@ -112,7 +121,23 @@ async function drive(pages: Page[], timeout = 130000) {
                 ? 'down'
                 : 'up'
           : null;
+      if (
+        !enemy &&
+        ((o.kind === 'activate' && distance(p, target) <= 1) ||
+          (down && distance(p, down) <= 1))
+      ) {
+        await send(pages[i], {
+          v: 1,
+          type: 'input',
+          direction: null,
+          attack: false,
+        });
+        await send(pages[i], { v: 1, type: 'interact' });
+        continue;
+      }
       await send(pages[i], { v: 1, type: 'input', direction, attack: true });
+      if (p.weaponAcquired && enemy?.windup && s.now >= p.counterAt)
+        await send(pages[i], { v: 1, type: 'counter' });
       if (p.hp) {
         if (
           p.weaponAcquired &&
@@ -475,8 +500,13 @@ test('로그인 보안·실제 모바일 멀티터치·세로 차단·공유 임
 async function finishSceneUI(p: Page) {
   const scene = (await snap(p)).cutscene;
   if (!scene) return;
-  for (let i = 0; i < STORY[scene.key].lines.length; i++)
+  for (let i = 0; i < STORY[scene.key].lines.length; i++) {
+    if (
+      (await p.locator('#scene-text').getAttribute('data-complete')) !== 'true'
+    )
+      await p.locator('#scene-next').click();
     await p.locator('#scene-next').click();
+  }
 }
 async function walk(p: Page, target: { x: number; y: number }, range = 1) {
   const end = Date.now() + 25000;
@@ -530,7 +560,24 @@ test('도트 주연 선택·돌 던지기·무기 획득·구간 컷신·퍼즐�
     await p.keyboard.press('Escape');
     expect((await snap(p)).players[0].x).toBe(frozen);
     await expect(p.locator('[data-scene="outbreak"]')).toBeVisible();
+    if (
+      (await p.locator('#scene-text').getAttribute('data-complete')) !== 'true'
+    )
+      await p.locator('#scene-next').click();
     await p.screenshot({ path: 'test-results/outbreak-cutscene.png' });
+    await p.locator('#scene-next').click();
+    await expect(p.locator('#scene-text')).toHaveAttribute(
+      'aria-label',
+      STORY.outbreak.lines[1].text,
+    );
+    await p.locator('#scene-prev').click();
+    await expect(p.locator('#scene-text')).toHaveAttribute(
+      'aria-label',
+      STORY.outbreak.lines[0].text,
+    );
+    await p.getByText('대화 기록', { exact: true }).click();
+    await expect(p.locator('.scene-log li')).toHaveCount(1);
+    await p.getByText('대화 기록', { exact: true }).click();
     await finishSceneUI(p);
     await expect.poll(async () => (await snap(p)).cutscene).toBeNull();
     expect((await snap(p)).players[0].weaponAcquired).toBe(false);
@@ -576,6 +623,12 @@ test('도트 주연 선택·돌 던지기·무기 획득·구간 컷신·퍼즐�
     await expect(p.locator('#skill1')).toBeEnabled();
     await expect(p.locator('#self-hud')).toContainText('구조용 신호총');
     expect((await snap(p)).players[0].job).toBe('medic');
+    await expect(p.locator('#counter')).toBeEnabled();
+    await p.locator('#menu').focus();
+    await p.keyboard.press('Space');
+    await expect(
+      p.getByRole('heading', { name: '잠시 숨을 고르세요.' }),
+    ).toHaveCount(0);
     await p.keyboard.press('u');
     await expect(p.locator('#toast')).toContainText('작업대가 없습니다');
     await expect(

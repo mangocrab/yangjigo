@@ -1,5 +1,11 @@
 import type { Direction } from '../shared/protocol';
-export type Action = 'skill1' | 'skill2' | 'interact' | 'menu' | 'upgrade';
+export type Action =
+  | 'skill1'
+  | 'skill2'
+  | 'counter'
+  | 'interact'
+  | 'menu'
+  | 'upgrade';
 export function vectorDirection(
   x: number,
   y: number,
@@ -50,6 +56,7 @@ export class Input {
       },
       actions: Record<string, Action> = {
         k: 'skill1',
+        ' ': 'counter',
         l: 'skill2',
         e: 'interact',
         u: 'upgrade',
@@ -75,7 +82,10 @@ export class Input {
         e.preventDefault();
         this.keyAttack = true;
       }
-      if (actions[k] && !e.repeat) this.onAction(actions[k]);
+      if (actions[k] && !e.repeat) {
+        e.preventDefault();
+        this.onAction(actions[k]);
+      }
       this.refresh();
     });
     window.addEventListener('keyup', (e) => {

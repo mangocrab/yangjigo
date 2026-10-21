@@ -1,6 +1,7 @@
 import Phaser from 'phaser';
 import {
   JOBS,
+  attackTiles,
   ZOMBIE_TYPES,
   TILE,
   stageFor,
@@ -249,6 +250,20 @@ export class SchoolScene extends Phaser.Scene {
     const stage = stageFor(s),
       objective = objectiveFor(s);
     this.marks.clear();
+    for (const z of s.zombies.filter((z) => z.hp > 0)) {
+      if (z.windup) {
+        for (const t of attackTiles(s, z)) {
+          this.marks.fillStyle(0xe47c52, 0.35 + Math.sin(time / 70) * 0.12);
+          this.marks.fillRect(t.x * 32 + 1, t.y * 32 + 1, 30, 30);
+          this.marks.lineStyle(2, 0xffb376, 0.9);
+          this.marks.strokeRect(t.x * 32 + 1, t.y * 32 + 1, 30, 30);
+        }
+      }
+      if (z.counterUntil > s.now) {
+        this.marks.lineStyle(2, 0x9ae0d8);
+        this.marks.strokeRect(z.x * 32 + 2, z.y * 32 + 2, 28, 28);
+      }
+    }
     for (const o of stage.objects) {
       const i = stage.objectives.findIndex(
         (q) => q.kind === 'collect' && q.target === o.id,
@@ -281,6 +296,7 @@ export class SchoolScene extends Phaser.Scene {
             name: ZOMBIE_TYPES[z.kind].name,
             weaponAcquired: true,
             attackEffect: 'weapon' as const,
+            interaction: null,
             job: 'vanguard' as Job,
             dir: 'down',
             connected: true,
@@ -310,6 +326,19 @@ export class SchoolScene extends Phaser.Scene {
         p.texture.startsWith('zombie') ? 0xcf8069 : 0x8bd1ab,
       );
       this.marks.fillRect(sprite.x - 12, sprite.y - 22, (24 * p.hp) / p.max, 3);
+      if (p.interaction) {
+        const progress = Math.max(
+          0,
+          Math.min(
+            1,
+            (s.now - p.interaction.startedAt) / p.interaction.durationMs,
+          ),
+        );
+        this.marks.fillStyle(0x253a42);
+        this.marks.fillRect(sprite.x - 14, sprite.y - 29, 28, 3);
+        this.marks.fillStyle(0xecc579);
+        this.marks.fillRect(sprite.x - 14, sprite.y - 29, 28 * progress, 3);
+      }
       if (p.id === this.localId) {
         this.marks.lineStyle(2, 0x9adbc6);
         this.marks.strokeEllipse(sprite.x, sprite.y + 13, 30, 9);

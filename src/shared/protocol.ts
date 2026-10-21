@@ -17,7 +17,14 @@ export type Command =
   | { v: 1; type: 'configure'; episodeId: number; difficulty: Difficulty }
   | {
       v: 1;
-      type: 'start' | 'interact' | 'upgrade' | 'retry' | 'restart' | 'refresh';
+      type:
+        | 'start'
+        | 'interact'
+        | 'counter'
+        | 'upgrade'
+        | 'retry'
+        | 'restart'
+        | 'refresh';
     };
 export function parseCommand(raw: unknown): Command | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -64,6 +71,7 @@ export function parseCommand(raw: unknown): Command | null {
         : null;
     case 'start':
     case 'interact':
+    case 'counter':
     case 'upgrade':
     case 'retry':
     case 'restart':
@@ -93,6 +101,15 @@ export interface Player {
   skillAt: [number, number];
   shieldUntil: number;
   focusUntil: number;
+  counterAt: number;
+  interaction: {
+    target: string;
+    startedAt: number;
+    durationMs: number;
+    x: number;
+    y: number;
+    hitAt: number;
+  } | null;
   attackEffect: 'weapon' | 'pulse';
   hitAt: number;
   attackUntil: number;
@@ -113,6 +130,8 @@ export interface Zombie {
   attackAt: number;
   state: string;
   stunUntil: number;
+  counterUntil: number;
+  windup: { until: number; dx: number; dy: number } | null;
 }
 export interface GameState {
   roomId: string;

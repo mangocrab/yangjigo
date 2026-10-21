@@ -59,6 +59,11 @@ let sceneId = '',
   sceneStamp = '';
 let toastText = '',
   toastUntil = 0;
+let typeTimer = 0,
+  typeKey = '',
+  typeText = '',
+  typeCount = 0,
+  objectiveKey = '';
 let renderer: ReturnType<typeof createGame> | null = null;
 async function api<T = Record<string, unknown>>(
   path: string,
@@ -541,8 +546,9 @@ function gameScreen() {
   lastEpoch = -1;
   lastMission = -1;
   sceneStamp = '';
+  objectiveKey = '';
   chrome(
-    `<main class="game-shell"><aside class="mission-panel"><div id="stage-progress" class="eyebrow"></div><h2>탈출 불가능한<br>학교</h2><p id="difficulty-label" class="tag"></p><p id="checkpoint" class="fine"></p><div class="mission-box"><small>현재 목표</small><h3 id="mission"></h3></div><div class="eyebrow">SURVIVORS</div><div id="team"></div><div class="sidebar-bottom"><span id="connection">연결됨</span><button id="menu" class="secondary">메뉴 / 설정 ESC</button></div></aside><section class="play-area"><div class="map-heading"><span id="map-location"></span><span id="elapsed"></span></div><div id="game-canvas"></div><div class="overlay"><div id="self-hud"></div><div id="notice" role="status"></div></div><div class="touch-controls"><div id="joystick" aria-label="이동 조이스틱"><span></span><b>이동</b></div><div class="combat"><button id="skill1" data-action="skill1"></button><button id="skill2" data-action="skill2"></button><button id="interact" data-action="interact">상호작용 E</button><button id="attack">공격 J</button></div></div><div class="keyboard-help">WASD / ↑↓←→ 이동　 J 공격　 K · L 스킬　 E 상호작용　 무기 획득 후 K · L 스킬</div></section></main>`,
+    `<main class="game-shell"><aside class="mission-panel"><div id="stage-progress" class="eyebrow"></div><h2>탈출 불가능한<br>학교</h2><p id="difficulty-label" class="tag"></p><p id="checkpoint" class="fine"></p><div class="mission-box"><small>현재 목표</small><h3 id="mission"></h3></div><div class="eyebrow">SURVIVORS</div><div id="team"></div><div class="sidebar-bottom"><span id="connection">연결됨</span><button id="menu" class="secondary">메뉴 / 설정 ESC</button></div></aside><section class="play-area"><div class="map-heading"><span id="map-location"></span><span id="elapsed"></span></div><div id="game-canvas"></div><div class="overlay"><div id="self-hud"></div><div id="interaction-progress" hidden></div><div id="mission-banner" class="mission-announcement" hidden></div><div id="notice" role="status"></div></div><div class="touch-controls"><div id="joystick" aria-label="이동 조이스틱"><span></span><b>이동</b></div><div class="combat"><button id="skill1" data-action="skill1"></button><button id="skill2" data-action="skill2"></button><button id="interact" data-action="interact">상호작용 E</button><button id="attack">공격 J</button><button id="counter" data-action="counter">반격 SPACE</button></div></div><div class="keyboard-help">WASD / ↑↓←→ 이동　 J 공격　 K · L 스킬　 E 상호작용　 SPACE 반격</div></section></main>`,
   );
   renderer = createGame(document.querySelector('#game-canvas')!);
   renderer.scene.localId = profile!.id;
@@ -610,6 +616,32 @@ function updateGame() {
   document.querySelector('#attack')!.textContent = p.weaponAcquired
     ? '공격 J'
     : '돌 던지기 J';
+  const charge = document.querySelector<HTMLElement>('#interaction-progress')!;
+  charge.hidden = !p.interaction;
+  if (p.interaction) {
+    const a = p.interaction,
+      pct = Math.min(
+        100,
+        Math.floor(((s.now - a.startedAt) / a.durationMs) * 100),
+      );
+    charge.innerHTML = `<strong>${a.target.startsWith('revive:') ? '동료 구조' : (stage.objects.find((o) => o.id === a.target)?.name ?? '상호작용')} ${pct}%</strong><div class="progress"><i style="width:${pct}%"></i></div><small>가만히 유지 · 이동/공격/피격 시 취소</small>`;
+  }
+  const counter = document.querySelector<HTMLButtonElement>('#counter')!,
+    cool = Math.max(0, Math.ceil((p.counterAt - s.now) / 1000));
+  counter.disabled = !p.weaponAcquired || !p.hp || !!s.cutscene || cool > 0;
+  counter.textContent = cool ? '반격 ' + cool + '초' : '반격 SPACE';
+  if (!s.cutscene) {
+    const key = s.stageEpoch + ':' + s.mission;
+    if (objectiveKey !== key) {
+      objectiveKey = key;
+      const banner = document.querySelector<HTMLElement>('#mission-banner')!;
+      banner.hidden = false;
+      banner.textContent = objective?.text ?? '임무 완료';
+      banner.style.animation = 'none';
+      void banner.offsetWidth;
+      banner.style.animation = '';
+    }
+  }
   if (s.cutscene) {
     showCutscene();
     lastMission = s.mission;
@@ -651,9 +683,21 @@ function showCutscene(force = false) {
     line = story.lines[sceneLine],
     done = scene.acknowledged.includes(profile!.id),
     connected = s.players.filter((p) => p.connected),
-    count = connected.filter((p) => scene.acknowledged.includes(p.id)).length;
+    count = connected.filter((p) => scene.acknowledged.includes(p.id)).length,
+    key = scene.id + ':' + sceneLine;
+  if (typeKey !== key) {
+    clearInterval(typeTimer);
+    typeKey = key;
+    typeText = line.text;
+    typeCount = 0;
+  }
   dialog(
-    `<div class="cutscene" data-scene="${scene.key}"><div class="scene-top"><span>${story.location}</span><span>STORY ${sceneLine + 1} / ${story.lines.length}</span></div><h2>${story.title}</h2><canvas id="story-backdrop" aria-label="${story.title} 도트 배경"></canvas><div class="scene-dialogue">${line.job ? `<canvas class="scene-portrait" data-skin="${s.players.find((p) => p.job === line.job)?.skin ?? 'uniform'}" data-job="${line.job}" data-armed="${scene.key !== 'outbreak'}"></canvas>` : '<span class="broadcast-icon">▥</span>'}<div><strong>${line.speaker}</strong><p>${esc(line.text)}</p></div></div><div class="scene-actions"><span>${done ? `동료를 기다립니다 · ${count}/${connected.length}명 확인` : '이야기 중에는 모두의 전투와 이동이 멈춥니다.'}</span><button id="scene-next" class="primary" ${done ? 'disabled' : ''}>${done ? '전원 확인 대기' : sceneLine === story.lines.length - 1 ? '장면 확인' : '다음 대사 →'}</button></div></div>`,
+    `<div class="cutscene" data-scene="${scene.key}"><div class="cinema-viewport"><canvas id="story-backdrop" aria-label="${story.title} 도트 배경"></canvas><div class="scene-top"><span>${story.location}</span><span>STORY ${sceneLine + 1} / ${story.lines.length}</span></div><h2>${story.title}</h2><details class="scene-log"><summary>대화 기록</summary><ol>${story.lines
+      .slice(0, sceneLine + 1)
+      .map((l) => `<li><b>${l.speaker}</b><p>${esc(l.text)}</p></li>`)
+      .join(
+        '',
+      )}</ol></details></div><div class="scene-dialogue">${line.job ? `<canvas class="scene-portrait" data-skin="${s.players.find((p) => p.job === line.job)?.skin ?? 'uniform'}" data-job="${line.job}" data-armed="${scene.key !== 'outbreak'}"></canvas>` : '<span class="broadcast-icon">▥</span>'}<div class="scene-copy"><strong>${line.speaker}</strong><p id="scene-text" aria-label="${esc(line.text)}" data-complete="false"></p></div></div><div class="scene-actions"><span>${done ? `동료를 기다립니다 · ${count}/${connected.length}명 확인` : '터치 / Enter: 대사 넘기기 · 전원 확인 후 진행'}</span><div><button id="scene-prev" class="secondary" ${done || !sceneLine ? 'disabled' : ''}>이전</button><button id="scene-next" class="primary" ${done ? 'disabled' : ''}>${done ? '전원 확인 대기' : sceneLine === story.lines.length - 1 ? '장면 확인' : '다음 대사 →'}</button></div></div></div>`,
     'cutscene',
   );
   drawStoryBackdrop(
@@ -662,13 +706,51 @@ function showCutscene(force = false) {
     scene.key !== 'outbreak',
   );
   previews();
+  const reveal = () => {
+    const text = document.querySelector<HTMLElement>('#scene-text');
+    if (!text) return;
+    const chars = Array.from(typeText);
+    text.textContent = chars.slice(0, typeCount).join('');
+    text.dataset.complete = String(typeCount >= chars.length);
+  };
+  reveal();
+  clearInterval(typeTimer);
+  if (typeCount < Array.from(typeText).length)
+    typeTimer = window.setInterval(() => {
+      typeCount++;
+      reveal();
+      if (typeCount >= Array.from(typeText).length) clearInterval(typeTimer);
+    }, 24);
   click('#scene-next', () => {
+    if (typeCount < Array.from(typeText).length) {
+      typeCount = Array.from(typeText).length;
+      clearInterval(typeTimer);
+      reveal();
+      return;
+    }
     if (sceneLine < story.lines.length - 1) {
       sceneLine++;
       showCutscene(true);
     } else send({ v: 1, type: 'scene-done', sceneId: scene.id });
   });
+  click('#scene-prev', () => {
+    if (sceneLine > 0) {
+      sceneLine--;
+      showCutscene(true);
+    }
+  });
 }
+window.addEventListener('keydown', (e) => {
+  if (
+    modalKind === 'cutscene' &&
+    !portrait &&
+    !e.repeat &&
+    (e.key === 'Enter' || e.key === ' ')
+  ) {
+    e.preventDefault();
+    document.querySelector<HTMLButtonElement>('#scene-next')?.click();
+  }
+});
 function dialog(html: string, kind = 'other') {
   modal = true;
   modalKind = kind;
@@ -678,6 +760,7 @@ function dialog(html: string, kind = 'other') {
   document.querySelector<HTMLButtonElement>('#modal-root button')?.focus();
 }
 function closeModal() {
+  clearInterval(typeTimer);
   modal = false;
   modalKind = '';
   document.querySelector('#modal-root')!.innerHTML = '';
@@ -768,6 +851,7 @@ input.onAction = (a: Action) => {
     return;
   }
   if (input.blocked) return;
+  if (a === 'counter') send({ v: 1, type: 'counter' });
   if (a === 'skill1' || a === 'skill2')
     send({ v: 1, type: 'skill', slot: a === 'skill1' ? 1 : 2 });
   if (a === 'upgrade') bench();

@@ -47,6 +47,7 @@ export class GameRoom extends DurableObject<Env> {
         p.connected = ctx.getWebSockets(p.id).length > 0;
         if (!p.connected) p.lastSeen = Date.now();
         p.input = { direction: null, attack: false, at: 0 };
+        p.interaction = null;
       }
       setActiveClock(
         this.state,
@@ -211,6 +212,7 @@ export class GameRoom extends DurableObject<Env> {
         p.connected = true;
         p.lastSeen = Date.now();
         p.input = { direction: null, attack: false, at: 0 };
+        p.interaction = null;
         this.broadcast();
         if (this.state.phase === 'playing') this.run();
         await this.publish();
@@ -302,7 +304,21 @@ export class GameRoom extends DurableObject<Env> {
       tick(this.state, Date.now());
       if (this.state.phase === 'clear' && !this.rewardSaved)
         await this.reward();
-      const sig = JSON.stringify({ ...this.state, now: 0, revision: 0 });
+      const needsClock =
+        !this.state.cutscene &&
+        (this.state.defendUntil > this.state.now ||
+          this.state.zombies.some((z) => z.windup) ||
+          this.state.players.some(
+            (p) =>
+              p.interaction ||
+              p.counterAt > this.state.now ||
+              p.skillAt.some((t) => t > this.state.now),
+          ));
+      const sig = JSON.stringify({
+        ...this.state,
+        now: needsClock ? Math.floor(this.state.now / 100) : 0,
+        revision: 0,
+      });
       if (sig !== this.signature) {
         this.signature = sig;
         this.broadcast();
@@ -365,6 +381,7 @@ export class GameRoom extends DurableObject<Env> {
       p.connected = false;
       p.lastSeen = Date.now();
       p.input = { direction: null, attack: false, at: 0 };
+      p.interaction = null;
     }
     setActiveClock(
       this.state,

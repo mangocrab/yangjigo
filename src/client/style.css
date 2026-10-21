@@ -1337,3 +1337,288 @@ canvas {
 .hero-card:disabled em {
   color: #dd9b83;
 }
+
+/* 구간 이야기와 플레이를 잇는 전체 화면 연출 */
+.modal-shade:has(.cutscene) {
+  padding: 0;
+  backdrop-filter: none;
+  background: #07111b;
+}
+.modal:has(.cutscene) {
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  box-shadow: none;
+}
+.cutscene {
+  height: 100%;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto;
+  background: #0d1c2a;
+}
+.cinema-viewport {
+  position: relative;
+  overflow: hidden;
+  background: #142b3e;
+  border-top: 18px solid #06121c;
+  border-bottom: 5px solid #09151e;
+  animation: scene-enter 0.45s ease-out;
+}
+#story-backdrop {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  aspect-ratio: auto;
+  object-fit: cover;
+  object-position: center bottom;
+  border: 0;
+  transform: scale(1.03);
+}
+.cinema-viewport:after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    #061320a8,
+    transparent 40%,
+    transparent 80%,
+    #06132066
+  );
+  pointer-events: none;
+}
+.scene-top {
+  position: absolute;
+  left: 24px;
+  right: 24px;
+  top: 16px;
+  z-index: 2;
+  color: #e2d9b8;
+  text-shadow: 2px 2px #162332;
+}
+.cutscene h2 {
+  position: absolute;
+  left: 24px;
+  top: 42px;
+  z-index: 2;
+  color: #f2d7a8;
+  text-shadow: 2px 2px #142435;
+  font-size: 30px;
+  margin: 0;
+}
+.scene-dialogue {
+  margin: 0;
+  border: 0;
+  border-top: 2px solid #8d927e;
+  gap: 26px;
+  padding: 20px max(24px, env(safe-area-inset-right));
+  min-height: 150px;
+  background: #142536;
+}
+.scene-dialogue .scene-portrait {
+  width: 112px;
+  height: 112px;
+  border: 0;
+  background: #223a4a;
+}
+.scene-copy {
+  flex: 1;
+  min-width: 0;
+}
+.scene-dialogue strong {
+  display: inline-block;
+  padding: 4px 12px;
+  border-left: 4px solid #deb47c;
+  background: #233b46;
+  font-size: 18px;
+}
+.scene-dialogue p {
+  color: #e6dfcd;
+  font-size: 18px;
+  line-height: 1.8;
+  min-height: 3.5em;
+  margin: 10px 0 0;
+}
+.scene-dialogue p[data-complete='false']:after {
+  content: '▌';
+  color: #e8ba79;
+  animation: blink 0.7s steps(2) infinite;
+}
+.scene-actions {
+  padding: 10px 24px;
+  background: #091823;
+  min-height: 60px;
+}
+.scene-actions > div {
+  display: flex;
+  gap: 10px;
+}
+.scene-actions button {
+  margin: 0 !important;
+  min-width: 100px;
+}
+.scene-log {
+  position: absolute;
+  right: 24px;
+  top: 50px;
+  z-index: 3;
+  color: #eee3cc;
+  font-size: 12px;
+}
+.scene-log summary {
+  cursor: pointer;
+  text-align: right;
+}
+.scene-log ol {
+  max-height: 35vh;
+  overflow: auto;
+  width: min(440px, 70vw);
+  background: #102535f2;
+  padding: 18px 18px 18px 32px;
+  border: 1px solid #819184;
+}
+.scene-log p {
+  font-size: 13px !important;
+  margin: 4px 0 12px !important;
+}
+#interaction-progress {
+  position: absolute;
+  top: 55px;
+  left: 12px;
+  padding: 10px 14px;
+  background: #122b35e8;
+  border: 1px solid #d7b77d;
+  min-width: 230px;
+  color: #ead0a1;
+}
+#interaction-progress small {
+  display: block;
+  margin-top: 5px;
+  font-size: 10px;
+  color: #aabfb5;
+}
+.mission-announcement {
+  position: absolute;
+  top: 65px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 12px 24px;
+  max-width: 80%;
+  text-align: center;
+  background: #152c38ed;
+  border-top: 2px solid #c8b582;
+  border-bottom: 2px solid #c8b582;
+  color: #f0ddaf;
+  font-size: 15px;
+  animation: objective-in 4s both;
+  pointer-events: none;
+}
+.combat #counter {
+  grid-column: 1/-1;
+  width: 100%;
+  height: 34px;
+  border-radius: 2px;
+  background: #785646;
+  color: #ffdfac;
+}
+@keyframes scene-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes objective-in {
+  0% {
+    opacity: 0;
+  }
+  10%,
+  75% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes blink {
+  50% {
+    opacity: 0;
+  }
+}
+@media (max-height: 550px) {
+  .cinema-viewport {
+    border-top-width: 8px;
+  }
+  .scene-top {
+    left: 14px;
+    right: 14px;
+    top: 7px;
+    font-size: 10px;
+  }
+  .cutscene h2 {
+    left: 14px;
+    top: 27px;
+    font-size: 18px;
+  }
+  .scene-dialogue {
+    min-height: 92px;
+    padding: 8px 16px;
+    gap: 14px;
+  }
+  .scene-dialogue .scene-portrait {
+    width: 68px;
+    height: 68px;
+  }
+  .scene-dialogue strong {
+    font-size: 13px;
+    padding: 2px 8px;
+  }
+  .scene-dialogue p {
+    font-size: 13px;
+    margin-top: 4px;
+    line-height: 1.5;
+    min-height: 3em;
+  }
+  .scene-actions {
+    min-height: 46px;
+    padding: 5px 14px;
+    font-size: 10px;
+  }
+  .scene-actions button {
+    min-width: 80px;
+    min-height: 34px;
+    padding: 7px 12px;
+  }
+  .scene-log {
+    top: 27px;
+    right: 14px;
+  }
+  .mission-announcement {
+    font-size: 11px;
+    top: 48px;
+    padding: 8px 12px;
+  }
+  #interaction-progress {
+    top: 45px;
+    min-width: 190px;
+    font-size: 12px;
+  }
+  .combat {
+    gap: 5px;
+  }
+  .combat #counter {
+    height: 30px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cinema-viewport,
+  .scene-dialogue p:after {
+    animation: none;
+  }
+}

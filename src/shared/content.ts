@@ -375,3 +375,18 @@ export function tileOpen(
     !a.doors.some((d) => d.x === x && d.y === y && s.mission < d.opensAtMission)
   );
 }
+
+export function attackTiles(
+  s: { stageIndex: number; mission: number },
+  z: Pos & { kind: ZombieKind; windup: { dx: number; dy: number } | null },
+): Pos[] {
+  if (!z.windup) return [];
+  const tiles: Pos[] = [];
+  for (let i = 1; i <= (z.kind === 'caretaker' ? 2 : 1); i++) {
+    const x = z.x + z.windup.dx * i,
+      y = z.y + z.windup.dy * i;
+    if (!tileOpen(s, x, y)) break;
+    tiles.push({ x, y });
+  }
+  return tiles;
+}
