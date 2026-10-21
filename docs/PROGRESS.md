@@ -31,7 +31,7 @@
 - 자유 터치 버튼 배치·유동 조이스틱·진동·저사양 품질 설정, 실제 채널 접속 인원/혼잡도 모니터링은 미완료다.
 - iPhone Safari/Android 실기기·Firefox·Safari, 공개 Cloudflare 배포·동시접속 부하·비용 측정은 미검증이다.
 - Phaser를 포함한 큰 JS 청크 경고가 남아 있다. 초기 로딩 최적화가 필요하다.
-- GitHub 원격 게시와 환경 Publish·새 작업 복원 검증은 별도다. 소스 백업에 DB·세션·비밀값은 포함하지 않는다. 이전 환경 장애와 소스 누락 기록은 `ENVIRONMENT_RECOVERY.md`에 남겼다.
+- 2026-10-21 사용자 요청에 따라 게임 구현 커밋 `8d6824e`를 `mangocrab/yangjigo`의 원격 `main`에 푸시하고 SHA 일치를 확인했다. 환경 Publish·새 작업 복원 검증은 별도다. 소스 백업에 DB·세션·비밀값은 포함하지 않는다. 이전 환경 장애와 소스 누락 기록은 `ENVIRONMENT_RECOVERY.md`에 남겼다.
 
 ## 다음 개발
 
